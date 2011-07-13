@@ -31,11 +31,16 @@ main = do putStr $ appNamePretty ++ ": "
           appDir <- getAppUserDataDirectory appName
           alreadyConfigured <- doesDirectoryExist appDir
           if alreadyConfigured then return () else configure appDir
-          (command:args) <- getArgs
-          let (Just action) = case lookup command commands of
-                                   Just this -> this
-                                   Nothing -> show
-          action args
+          input <- getArgs
+          if null input then do let action = present
+                                let args = []
+                                action args
+                                   
+                        else do let (command:args) = input
+                                let action = case lookup command commands of
+                                                      Just this -> this
+                                                      Nothing -> help
+                                action args
           exitSuccess
 
 present :: [String] -> IO ()
@@ -101,9 +106,10 @@ getListsFromConfigHelper file = do doneReading <- hIsEOF file
                                    if not doneReading 
                                       then do head <- (readLineFromConfig file)
                                               rest <- getListsFromConfigHelper file 
-                                              return head:rest
-                                      else return (Just defaultFile):[]
-
+                                              let result = head:rest
+                                              return result
+                                      else do let result = (Just defaultFile):[]
+                                              return result
 readLineFromConfig :: Handle -> IO (Maybe FilePath)
 readLineFromConfig handle =  do line <- hGetLine handle 
                                 if (head (words line)) == "FILE" then return (Just ((words line) !! 2))
