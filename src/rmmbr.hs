@@ -13,6 +13,12 @@ import System.Exit
 import System.Directory
 import Data.Time
 import Data.Maybe( fromMaybe )
+import Data.Version
+import Toolbox( inTwoColumns )
+
+version_info = [0,3]
+version_tags = ["fixed_io"]
+version = Data.Version.Version version_info version_tags
 
 appNamePretty = "Rmmbr"
 appName = "rmmbr"
@@ -30,6 +36,15 @@ commands = [ ("show", (present, presentOptions))
            , ("help", (help, helpOptions))
            , ("reset", (reset, resetOptions))
            ]
+
+command_info = [ ("show", "view the contents of your todo lists")
+               , ("add", "add an entry to one of your todo lists")
+               , ("remove", "remove an entry from one of your todo lists")
+               , ("create", "create a new todo list")
+               , ("help", "show this help information")
+               , ("reset", "clear all your todo lists, and start over with no entries")
+               ]
+             
 
 data Flags = Version
               | Verbose
@@ -58,10 +73,9 @@ commandHelpOption = Option ['h'] ["help"] (NoArg Help) "get help for this comman
 -- OptDescr a = Option [Char] [String] (ArgDescr a) String
 mainOptions :: [OptDescr Flags]
 mainOptions = [Option ['v'] ["verbose"] (NoArg Verbose) "provide more detailed output"
-              ,Option ['V'] ["version"] (NoArg Version) "show detailed version information, with changes from previous versions"
+              ,Option ['V'] ["version"] (NoArg Main.Version) "show detailed version information, with changes from previous versions"
               ,Option ['h'] ["help"] (NoArg Help) "show help information for this program"
               ]
-
 
 main = do putStr $ appNamePretty ++ ": "
           appDir <- getAppUserDataDirectory appName
@@ -128,9 +142,10 @@ helpOptions = [commandHelpOption
               ]
 
 help :: [String] -> [OptDescr Flags] -> IO ()
-help args options = do let (flags, nonOpts, msgs) = getOpt RequireOrder options args 
-                       putStrLn "Displaying help for the program."
-
+help args options = do putStrLn "Displaying help for the program."
+                       let (flags, nonOpts, msgs) = getOpt RequireOrder options args
+                       putStrLn $ inTwoColumns command_info
+                       
 resetOptions :: [OptDescr Flags]
 resetOptions = []
 

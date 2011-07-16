@@ -1,3 +1,9 @@
 Rmmbr is a command-line utility program that allows you to create and manage to-do lists.
 
 Currently it does not have any functionality as I had to tear it apart to get the command-line parsing back in shape. But now that this is fixed, I can go ahead and put the rest in place.
+
+Ok, so I did a little bit more work, but it still lacks functionality.
+
+TODOs:
+
+figure out why GHC generates weird files when you specify -outputdir
