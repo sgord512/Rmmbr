@@ -16,9 +16,9 @@ import Data.Maybe( fromMaybe )
 import Data.Version
 import Toolbox( inTwoColumns )
 
-version_info = [0,3]
-version_tags = ["fixed_io"]
-version = Data.Version.Version version_info version_tags
+version_log = [Version [0,3] ["fixed_io"]
+              ,Version [0,4] ["almost_stable"]
+              ]
 
 appNamePretty = "Rmmbr"
 appName = "rmmbr"
@@ -28,7 +28,7 @@ decoLength = 30
 defaultSort = "def"
 defaultList = "todo"
 
-commands :: [(String, ([String] -> [OptDescr Flags] -> IO (), [OptDescr Flags]))]
+commands :: [(String, ([String] -> [OptDescr OptionTransformer] -> IO (), [OptDescr OptionTransformer]))]
 commands = [ ("show", (present, presentOptions))
            , ("add", (add, addOptions))
            , ("remove", (remove, removeOptions))
@@ -44,70 +44,134 @@ command_info = [ ("show", "view the contents of your todo lists")
                , ("help", "show this help information")
                , ("reset", "clear all your todo lists, and start over with no entries")
                ]
-             
 
-data Flags = Version
-              | Verbose
-              | Help
-              | Name (String -> Flags)
-              | Overwrite (Maybe String -> Flags)
-              | RemoveList (Maybe String -> Flags)
-              | Position (String -> Flags)
-              | Entry (String -> Flags)
-              | AddList (Maybe String -> Flags)
-              | Importance (Maybe String -> Flags)
-              | Confirm (String -> Flags)
-              | ShowList String
-              | Sort String
 
-makeShowList :: Maybe String -> Flags
-makeShowList ms = ShowList (fromMaybe defaultList ms)
+data Options = Options { showVerbose :: Bool,
+                         showHelp :: Bool,
+                         name :: String,
+                         overwrite :: Bool,
+                         removeList :: String,
+                         position :: String,
+                         entry :: String,
+                         addList :: String,
+                         importance :: String,
+                         confirm :: String,
+                         showList :: String,
+                         sort :: String }
 
-makeSort :: Maybe String -> Flags
-makeSort ms = Sort (fromMaybe defaultSort ms)
+defaultOptions :: Options
+defaultOptions = Options { showVerbose = False,
+                           showHelp = False,
+                           name = "",
+                           overwrite = False,
+                           removeList = "",
+                           position = "",
+                           entry = "",
+                           addList = defaultList,
+                           importance = "",
+                           Main.showList = "",
+                           sort = "" }
+
+type OptionTransformer = Options -> IO Options
+
+doVersion :: Options -> IO Options
+doVersion opts = do putStrLn $ unlines $ map showVersion version_log
+                    return opts 
+
+doVerbose :: Options -> IO Options
+doVerbose opts = do putStrLn "doVerbose" 
+                    return opts { showVerbose = True }
+
+doHelp :: Options -> IO Options
+doHelp opts = do putStrLn "doHelp" 
+                 return opts { showHelp = True }
+
+doName :: String -> Options -> IO Options
+doName inputName opts = do putStrLn "doVerbose"
+                           return opts { name = inputName }
+
+doOverwrite :: Options -> IO Options
+doOverwrite opts = return opts { overwrite = True }
+
+doRemoveList :: String -> Options -> IO Options
+doRemoveList removeName opts = return opts { removeList = removeName } 
+
+doPosition :: String -> Options -> IO Options
+doPosition pos opts = return opts { position = pos }
+
+doEntry :: String -> Options -> IO Options
+doEntry text opts = return opts { entry = text }
+
+
+doAddList :: String -> Options -> IO Options
+doAddList list opts = return opts { addList = list }
+
+doImportance :: String -> Options -> IO Options
+doImportance level opts = return opts { importance = level }
+
+doShowList :: String -> Options -> IO Options
+doShowList list opts = return opts { Main.showList = list }
+
+doSort :: String -> Options -> IO Options
+doSort sortBy opts = return opts { sort = sortBy }
+
 
 {-- Different commonly occurring options will be defined here so they can be reused --}
 
-commandHelpOption = Option ['h'] ["help"] (NoArg Help) "get help for this command"
+commandHelpOption = Option ['h'] ["help"] (NoArg doHelp) "get help for this command"
+versionOption = Option ['V'] ["version"] (NoArg doVersion) "show detailed version information, with changes from previous versions"
+verboseOption desc = Option ['v'] ["verbose"] (NoArg doVerbose) desc
+programHelpOption = Option ['h'] ["help"] (NoArg doHelp) "show help information for this program"
+showListOption = Option ['l'] ["list"] (ReqArg doShowList "LIST") "choose a list to display"
+sortOrderOption = Option ['s'] ["sort"] (ReqArg doSort "SORT ORDER") "specify an order for entries to be sorted in when they are presented"
+
+
+
 
 -- OptDescr a = Option [Char] [String] (ArgDescr a) String
-mainOptions :: [OptDescr Flags]
-mainOptions = [Option ['v'] ["verbose"] (NoArg Verbose) "provide more detailed output"
-              ,Option ['V'] ["version"] (NoArg Main.Version) "show detailed version information, with changes from previous versions"
-              ,Option ['h'] ["help"] (NoArg Help) "show help information for this program"
-              ]
 
 main = do putStr $ appNamePretty ++ ": "
           appDir <- getAppUserDataDirectory appName
           alreadyConfigured <- doesDirectoryExist appDir
           if alreadyConfigured then return () else configure appDir
           input <- getArgs
-          if null input then do let (action, options) = (present, presentOptions)
-                                let args = []
-                                action args options
-                                   
-                        else do let (command:args) = input
-                                let (action, options) = case lookup command commands of
-                                                      Just value -> value
-                                                      Nothing -> (help, helpOptions)
-                                action args options
+          let action = if null input then present 
+                                     else case lookup (head input) commands of
+                                          Just (act, _) -> act
+                                          Nothing -> present
+          let args = if null input then []
+                                   else case lookup (head input) commands of
+                                        Just _ -> (tail input)
+                                        Nothing -> input
+          let options = if null input then []
+                                      else case lookup (head input) commands of
+                                           Just (_, opt) -> opt
+                                           Nothing -> presentOptions
+          action args options
 
-presentOptions :: [OptDescr Flags]
-presentOptions = [Option ['l'] ["list"] (OptArg makeShowList "LIST") "choose a list to display"
-                 ,Option ['v'] ["verbose"] (NoArg Verbose) "show more detailed version of selected lists"
-                 ,Option ['s'] ["sort"] (OptArg makeSort "SORT ORDER") "specify an order for entries to be sorted in when they are presented"
-                 ,commandHelpOption]
 
-present :: [String] -> [OptDescr Flags] -> IO ()
-present args options = do let (flags, nonOpts, msgs) = getOpt RequireOrder options args
-                          putStrLn "Showing all entries."
+presentOptions :: [OptDescr OptionTransformer]
+presentOptions = [showListOption
+                 ,verboseOption "show more detailed version of selected lists"
+                 ,sortOrderOption
+                 ,commandHelpOption
+                 ,versionOption
+                 ]
 
-addOptions :: [OptDescr Flags]
-addOptions = [commandHelpOption]
+present :: [String] -> [OptDescr OptionTransformer] -> IO ()
+present args options = do putStrLn "Showing all entries."
+                          let (optionTransformations, nonOpts, msgs) = getOpt RequireOrder options args
+                          opts <- foldl (>>=) (return defaultOptions) optionTransformations
 
-add :: [String] -> [OptDescr Flags] -> IO ()
-add args options = do let (flags, nonOpts, msgs) = getOpt RequireOrder options args 
-                      putStrLn "Adding an entry."
+
+addOptions :: [OptDescr OptionTransformer]
+addOptions = [commandHelpOption
+             ]
+
+add :: [String] -> [OptDescr OptionTransformer] -> IO ()
+add args options = do putStrLn "Adding an entry."
+                      let (optionTransformations, nonOpts, msgs) = getOpt RequireOrder options args
+                      opts <- foldl (>>=) (return defaultOptions) optionTransformations
 
 {--
 add [] = return ()
@@ -121,51 +185,44 @@ add (x:xs) = do putStrLn ("adding \"" ++ x ++ "\"")
                 addItems xs (head fileLocations)
 --}
 
-removeOptions :: [OptDescr Flags]
+removeOptions :: [OptDescr OptionTransformer]
 removeOptions = [commandHelpOption
                 ]
 
-remove :: [String] -> [OptDescr Flags] -> IO ()
-remove args options = do let (flags, nonOpts, msgs) = getOpt RequireOrder options args 
-                         putStrLn "Removing an entry."
+remove :: [String] -> [OptDescr OptionTransformer] -> IO ()
+remove args options = do putStrLn "Removing an entry."
+                         let (optionTransformations, nonOpts, msgs) = getOpt RequireOrder options args
+                         opts <- foldl (>>=) (return defaultOptions) optionTransformations
 
-createOptions :: [OptDescr Flags]
+
+createOptions :: [OptDescr OptionTransformer]
 createOptions = [commandHelpOption
                 ]
 
-create :: [String] -> [OptDescr Flags] -> IO ()
-create args options = do let (flags, nonOpts, msgs) = getOpt RequireOrder options args 
-                         putStrLn "Creating a list of entries."
+create :: [String] -> [OptDescr OptionTransformer] -> IO ()
+create args options = do putStrLn "Creating a new list of entries."
+                         let (optionTransformations, nonOpts, msgs) = getOpt RequireOrder options args
+                         opts <- foldl (>>=) (return defaultOptions) optionTransformations
 
-helpOptions :: [OptDescr Flags]
+
+helpOptions :: [OptDescr OptionTransformer]
 helpOptions = [commandHelpOption
               ]
 
-help :: [String] -> [OptDescr Flags] -> IO ()
+help :: [String] -> [OptDescr OptionTransformer] -> IO ()
 help args options = do putStrLn "Displaying help for the program."
                        let (flags, nonOpts, msgs) = getOpt RequireOrder options args
+                       opts <- foldl (>>=) (return defaultOptions) optionTransformations
                        putStrLn $ inTwoColumns command_info
                        
-resetOptions :: [OptDescr Flags]
-resetOptions = []
+resetOptions :: [OptDescr OptionTransformer]
+resetOptions = [
+               ]
 
-reset :: [String] -> [OptDescr Flags] -> IO ()
-reset args options = do let (flags, nonOpts, msgs) = getOpt RequireOrder options args
-                        putStrLn "Displaying help for the reset command"
-
-{--
-processArgs :: [FilePath] -> [String] -> IO ()
-processArgs fileLocations [] = do putStrLn "Showing all recorded entries."
-                                  itemsList <- readFile (head fileLocations)
-                                  putStrLn (replicate decoLength '-')
-                                  putStrLn itemsList
-                                  putStrLn (replicate decoLength '-')
-processArgs fileLocations (x:xs) | x == do putStrLn "Adding a new entry."
-                                           listFile <- openFile (head fileLocations) AppendMode
-                                           addItems args listFile 
-                                           hClose listFile
-                                 | otherwise 
---}
+reset :: [String] -> [OptDescr OptionTransformer] -> IO ()
+reset args options = do putStrLn "Displaying help for the reset command"
+                        let (flags, nonOpts, msgs) = getOpt RequireOrder options args
+                        opts <- foldl (>>=) (return defaultOptions) optionTransformations
 
 configure :: FilePath -> IO ()
 configure appDir = do putStrLn "Creating appropriate directories and config files..."
@@ -196,3 +253,38 @@ readLineFromConfig :: Handle -> IO (Maybe FilePath)
 readLineFromConfig handle =  do line <- hGetLine handle 
                                 if (head (words line)) == "FILE" then return (Just ((words line) !! 2))
                                                                  else return Nothing
+{--
+data Flags = Version
+              | Verbose
+              | Help
+              | Name (String -> Flags)
+              | Overwrite (Maybe String -> Flags)
+              | RemoveList (Maybe String -> Flags)
+              | Position (String -> Flags)
+              | Entry (String -> Flags)
+              | AddList (Maybe String -> Flags)
+              | Importance (Maybe String -> Flags)
+              | Confirm (String -> Flags)
+              | ShowList String
+              | Sort String
+
+makeShowList :: Maybe String -> Flags
+makeShowList ms = ShowList (fromMaybe defaultList ms)
+
+makeSort :: Maybe String -> Flags
+makeSort ms = Sort (fromMaybe defaultSort ms)
+--}
+
+{--
+processArgs :: [FilePath] -> [String] -> IO ()
+processArgs fileLocations [] = do putStrLn "Showing all recorded entries."
+                                  itemsList <- readFile (head fileLocations)
+                                  putStrLn (replicate decoLength '-')
+                                  putStrLn itemsList
+                                  putStrLn (replicate decoLength '-')
+processArgs fileLocations (x:xs) | x == do putStrLn "Adding a new entry."
+                                           listFile <- openFile (head fileLocations) AppendMode
+                                           addItems args listFile 
+                                           hClose listFile
+                                 | otherwise 
+--}
