@@ -7,3 +7,27 @@ Ok, so I did a little bit more work, but it still lacks functionality.
 TODOs:
 
 figure out why GHC generates weird files when you specify -outputdir
+
+Ok, so I cleaned up a lot.
+
+It all now pretty much works as I want it to.
+
+But I have to think about the design of the program a lot more now.
+
+
+Remove:
+
+So there should be a way to remove with a single command.
+Maybe remove last, first, with different lists.
+Maybe remove all by date, importance, (regexp?)
+
+There should be a way to remove interactively and a way to do it non-interactively.
+
+They should be seperate commands.
+Interactively numbers them all, and lets you remove by number.
+Can you do ranges,yes.
+
+Adding should be easy.
+Creating should be easy.
+
+how do I deal with sort Order? I have no idea.

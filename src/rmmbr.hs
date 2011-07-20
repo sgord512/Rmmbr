@@ -18,6 +18,8 @@ import Toolbox( inTwoColumns )
 
 version_log = [Version [0,3] ["fixed_io"]
               ,Version [0,4] ["almost_stable"]
+              ,Version [0,5] ["getting_there"]
+              ,Version [0,6] ["finalized_io"]
               ]
 
 appNamePretty = "Rmmbr"
@@ -27,8 +29,9 @@ defaultFile = "todo.txt"
 decoLength = 30 
 defaultSort = "def"
 defaultList = "todo"
+usageHelpHeader = "Usage: rmmbr [OPTION...] "
 
-commands :: [(String, ([String] -> [OptDescr OptionTransformer] -> IO (), [OptDescr OptionTransformer]))]
+commands :: [(String, ((Options, [String]) -> IO (), [OptDescr OptionTransformer]))]
 commands = [ ("show", (present, presentOptions))
            , ("add", (add, addOptions))
            , ("remove", (remove, removeOptions))
@@ -45,33 +48,27 @@ command_info = [ ("show", "view the contents of your todo lists")
                , ("reset", "clear all your todo lists, and start over with no entries")
                ]
 
-
 data Options = Options { showVerbose :: Bool,
                          showHelp :: Bool,
-                         name :: String,
+                         theList :: String,
                          overwrite :: Bool,
-                         removeList :: String,
                          position :: String,
                          entry :: String,
-                         addList :: String,
                          importance :: String,
                          confirm :: String,
-                         showList :: String,
                          sort :: String }
 
 defaultOptions :: Options
 defaultOptions = Options { showVerbose = False,
                            showHelp = False,
-                           name = "",
+                           theList = defaultList,
                            overwrite = False,
-                           removeList = "",
                            position = "",
                            entry = "",
-                           addList = defaultList,
                            importance = "",
-                           Main.showList = "",
                            sort = "" }
 
+{-- all the optionTransformer actions are defined here --}
 type OptionTransformer = Options -> IO Options
 
 doVersion :: Options -> IO Options
@@ -86,15 +83,11 @@ doHelp :: Options -> IO Options
 doHelp opts = do putStrLn "doHelp" 
                  return opts { showHelp = True }
 
-doName :: String -> Options -> IO Options
-doName inputName opts = do putStrLn "doVerbose"
-                           return opts { name = inputName }
-
 doOverwrite :: Options -> IO Options
 doOverwrite opts = return opts { overwrite = True }
 
 doRemoveList :: String -> Options -> IO Options
-doRemoveList removeName opts = return opts { removeList = removeName } 
+doRemoveList removeName opts = return opts { theList = removeName } 
 
 doPosition :: String -> Options -> IO Options
 doPosition pos opts = return opts { position = pos }
@@ -102,19 +95,17 @@ doPosition pos opts = return opts { position = pos }
 doEntry :: String -> Options -> IO Options
 doEntry text opts = return opts { entry = text }
 
-
 doAddList :: String -> Options -> IO Options
-doAddList list opts = return opts { addList = list }
+doAddList list opts = return opts { theList = list }
 
 doImportance :: String -> Options -> IO Options
 doImportance level opts = return opts { importance = level }
 
 doShowList :: String -> Options -> IO Options
-doShowList list opts = return opts { Main.showList = list }
+doShowList list opts = return opts { theList = list }
 
 doSort :: String -> Options -> IO Options
 doSort sortBy opts = return opts { sort = sortBy }
-
 
 {-- Different commonly occurring options will be defined here so they can be reused --}
 
@@ -122,13 +113,10 @@ commandHelpOption = Option ['h'] ["help"] (NoArg doHelp) "get help for this comm
 versionOption = Option ['V'] ["version"] (NoArg doVersion) "show detailed version information, with changes from previous versions"
 verboseOption desc = Option ['v'] ["verbose"] (NoArg doVerbose) desc
 programHelpOption = Option ['h'] ["help"] (NoArg doHelp) "show help information for this program"
-showListOption = Option ['l'] ["list"] (ReqArg doShowList "LIST") "choose a list to display"
+selectListOption = Option ['l'] ["list"] (ReqArg doShowList "LIST") "choose a list to display"
 sortOrderOption = Option ['s'] ["sort"] (ReqArg doSort "SORT ORDER") "specify an order for entries to be sorted in when they are presented"
 
-
-
-
--- OptDescr a = Option [Char] [String] (ArgDescr a) String
+{-- the main function --}
 
 main = do putStr $ appNamePretty ++ ": "
           appDir <- getAppUserDataDirectory appName
@@ -147,82 +135,83 @@ main = do putStr $ appNamePretty ++ ": "
                                       else case lookup (head input) commands of
                                            Just (_, opt) -> opt
                                            Nothing -> presentOptions
-          action args options
-
+          processedInput <- processInput args options
+          action processedInput
 
 presentOptions :: [OptDescr OptionTransformer]
-presentOptions = [showListOption
+presentOptions = [selectListOption
                  ,verboseOption "show more detailed version of selected lists"
                  ,sortOrderOption
                  ,commandHelpOption
                  ,versionOption
                  ]
 
-present :: [String] -> [OptDescr OptionTransformer] -> IO ()
-present args options = do putStrLn "Showing all entries."
-                          let (optionTransformations, nonOpts, msgs) = getOpt RequireOrder options args
-                          opts <- foldl (>>=) (return defaultOptions) optionTransformations
+processInput :: [String] -> [OptDescr OptionTransformer] -> IO (Options, [String])
+processInput args options = do case getOpt RequireOrder options args of
+                                    (optionTransformations, nonOpts, []) -> do opts <- foldl (>>=) (return defaultOptions) optionTransformations
+                                                                               return (opts, nonOpts)
+                                    (_,_,errors) -> ioError $ userError $ ((unlines errors) ++ (usageInfo usageHelpHeader options))
 
+{-- Shows a list or group of lists --}
+
+present :: (Options, [String]) -> IO ()
+present (opts,_) = do putStrLn "Showing all entries."
+                      let chosenList = theList opts ++ ".txt"
+                      appDir <- getAppUserDataDirectory appName
+                      allLists <- getKnownLists configFilePath appDir                                                    
+                      if chosenList `elem` allLists then do setCurrentDirectory appDir
+                                                            withFile chosenList ReadMode (\handle -> do contents <- hGetContents handle
+                                                                                                        putStrLn contents)
+                                                    else ioError $ userError $ "The selected list does not exist: " ++ chosenList
 
 addOptions :: [OptDescr OptionTransformer]
 addOptions = [commandHelpOption
+             ,selectListOption
              ]
 
-add :: [String] -> [OptDescr OptionTransformer] -> IO ()
-add args options = do putStrLn "Adding an entry."
-                      let (optionTransformations, nonOpts, msgs) = getOpt RequireOrder options args
-                      opts <- foldl (>>=) (return defaultOptions) optionTransformations
-
-{--
-add [] = return ()
-add (x:xs) = do putStrLn ("adding \"" ++ x ++ "\"")
-                setCurrentDirectory appDir
-                configFile <- openFile configFilePath ReadMode
-                fileLocations <- getListsFromConfig configFile
-                currentTime <- getCurrentTime
-                hPutStr (head fileLocations) $ formatTime defaultTimeLocale "\n%D (%X) - " currentTime 
-                hPutStrLn (head fileLocations) x
-                addItems xs (head fileLocations)
---}
+add :: (Options, [String]) -> IO ()
+add (opts,_) = do putStrLn "Adding an entry."
+                  let chosenList = theList opts ++ ".txt"
+                      newEntry = entry opts   
+                  appDir <- getAppUserDataDirectory appName                   
+                  allLists <- getKnownLists configFilePath appDir                     
+                  currentTime <- getCurrentTime
+                  if chosenList `elem` allLists then do setCurrentDirectory appDir
+                                                        withFile chosenList ReadWriteMode (\handle -> do hPutStr handle $ formatTime defaultTimeLocale "\n%D (%X) - " currentTime 
+                                                                                                         hPutStrLn handle newEntry)
+                                                else ioError $ userError "The selected list does not exist"
 
 removeOptions :: [OptDescr OptionTransformer]
 removeOptions = [commandHelpOption
                 ]
 
-remove :: [String] -> [OptDescr OptionTransformer] -> IO ()
-remove args options = do putStrLn "Removing an entry."
-                         let (optionTransformations, nonOpts, msgs) = getOpt RequireOrder options args
-                         opts <- foldl (>>=) (return defaultOptions) optionTransformations
-
+remove :: (Options, [String]) -> IO ()
+remove (opts,_) = do putStrLn "Removing an entry."
+                     return ()
 
 createOptions :: [OptDescr OptionTransformer]
 createOptions = [commandHelpOption
                 ]
 
-create :: [String] -> [OptDescr OptionTransformer] -> IO ()
-create args options = do putStrLn "Creating a new list of entries."
-                         let (optionTransformations, nonOpts, msgs) = getOpt RequireOrder options args
-                         opts <- foldl (>>=) (return defaultOptions) optionTransformations
-
+create :: (Options, [String]) -> IO ()
+create (opts,_) = do putStrLn "Creating a new list of entries."
+                     return ()
 
 helpOptions :: [OptDescr OptionTransformer]
 helpOptions = [commandHelpOption
               ]
 
-help :: [String] -> [OptDescr OptionTransformer] -> IO ()
-help args options = do putStrLn "Displaying help for the program."
-                       let (flags, nonOpts, msgs) = getOpt RequireOrder options args
-                       opts <- foldl (>>=) (return defaultOptions) optionTransformations
-                       putStrLn $ inTwoColumns command_info
+help :: (Options, [String]) -> IO ()
+help (opts,_) = do putStrLn "Displaying help for the program."
+                   putStrLn $ inTwoColumns command_info
                        
 resetOptions :: [OptDescr OptionTransformer]
 resetOptions = [
                ]
 
-reset :: [String] -> [OptDescr OptionTransformer] -> IO ()
-reset args options = do putStrLn "Displaying help for the reset command"
-                        let (flags, nonOpts, msgs) = getOpt RequireOrder options args
-                        opts <- foldl (>>=) (return defaultOptions) optionTransformations
+reset :: (Options, [String]) -> IO ()
+reset (opts,_) = do putStrLn "Displaying help for the reset command"
+                    return ()
 
 configure :: FilePath -> IO ()
 configure appDir = do putStrLn "Creating appropriate directories and config files..."
@@ -230,15 +219,22 @@ configure appDir = do putStrLn "Creating appropriate directories and config file
                       setCurrentDirectory appDir
                       writeFile configFilePath ""
                       writeFile defaultFile ((replicate decoLength '*') ++ "\ntodo.txt\n" ++ (replicate decoLength '*'))
+
+
+getKnownLists :: FilePath -> String -> IO [FilePath]
+getKnownLists configFilePath appDir= do setCurrentDirectory appDir
+                                        configFile <- openFile configFilePath ReadMode
+                                        lists <- getListsFromConfig configFile
+                                        return lists
                       
-getListFromConfig :: Handle -> IO [FilePath]
-getListFromConfig file = do list <- getListsFromConfigHelper file
-                            return $ let isFile x = case x of 
+getListsFromConfig :: Handle -> IO [FilePath]
+getListsFromConfig file = do list <- getListsFromConfigHelper file
+                             return $ let isFile x = case x of 
                                                        Just path -> True
                                                        Nothing -> False
-                                         extract :: Maybe a -> a 
-                                         extract (Just something) = something
-                                     in map extract (filter isFile list)
+                                          extract :: Maybe a -> a 
+                                          extract (Just something) = something
+                                      in map extract (filter isFile list)
 
 getListsFromConfigHelper :: Handle -> IO [Maybe FilePath]
 getListsFromConfigHelper file = do doneReading <- hIsEOF file
@@ -253,38 +249,3 @@ readLineFromConfig :: Handle -> IO (Maybe FilePath)
 readLineFromConfig handle =  do line <- hGetLine handle 
                                 if (head (words line)) == "FILE" then return (Just ((words line) !! 2))
                                                                  else return Nothing
-{--
-data Flags = Version
-              | Verbose
-              | Help
-              | Name (String -> Flags)
-              | Overwrite (Maybe String -> Flags)
-              | RemoveList (Maybe String -> Flags)
-              | Position (String -> Flags)
-              | Entry (String -> Flags)
-              | AddList (Maybe String -> Flags)
-              | Importance (Maybe String -> Flags)
-              | Confirm (String -> Flags)
-              | ShowList String
-              | Sort String
-
-makeShowList :: Maybe String -> Flags
-makeShowList ms = ShowList (fromMaybe defaultList ms)
-
-makeSort :: Maybe String -> Flags
-makeSort ms = Sort (fromMaybe defaultSort ms)
---}
-
-{--
-processArgs :: [FilePath] -> [String] -> IO ()
-processArgs fileLocations [] = do putStrLn "Showing all recorded entries."
-                                  itemsList <- readFile (head fileLocations)
-                                  putStrLn (replicate decoLength '-')
-                                  putStrLn itemsList
-                                  putStrLn (replicate decoLength '-')
-processArgs fileLocations (x:xs) | x == do putStrLn "Adding a new entry."
-                                           listFile <- openFile (head fileLocations) AppendMode
-                                           addItems args listFile 
-                                           hClose listFile
-                                 | otherwise 
---}
