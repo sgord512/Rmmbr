@@ -31,3 +31,22 @@ Adding should be easy.
 Creating should be easy.
 
 how do I deal with sort Order? I have no idea.
+
+ok, for add, I can just take in all the arguments, and do a mapM on them, to add them all.
+
+------------------------------------------------------------------------------------------------------------------------
+
+I now have add and create and present working pretty much as I would like them to. I next should work on remove, which is absolutely teh most complicated command.
+
+I should also make it so that you don't have to use a flag to specify a list when doing create, add, or show.
+
+I can probably use ReturnInOrder and the Options type to get that done.
+
+Wow, this is getting very close to completion.
+
+I should think about all that config-file stuff. Should I keep it? Fix it? Make a seperate module for config related stuff?
+(At the very least, I should rewrite it, because it is very very ugly, and inefficient.
+
+------------------------------------------------------------------------------------------------------------------------
+
+Also, I am having a weird issue where ghc generates a stupendously long list of warnings during linking. This causes the make to fail, but it works fine if I symlink my toolbox in, and then make it in ghc.

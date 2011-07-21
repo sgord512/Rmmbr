@@ -12,6 +12,8 @@ import System.Locale
 import System.Exit
 import System.Directory
 import Data.Time
+import Monad
+import qualified Data.List as List
 import Data.Maybe( fromMaybe )
 import Data.Version
 import Toolbox( inTwoColumns )
@@ -20,6 +22,7 @@ version_log = [Version [0,3] ["fixed_io"]
               ,Version [0,4] ["almost_stable"]
               ,Version [0,5] ["getting_there"]
               ,Version [0,6] ["finalized_io"]
+              ,Version [0,7] ["adding_works","creating_works"]
               ]
 
 appNamePretty = "Rmmbr"
@@ -53,7 +56,6 @@ data Options = Options { showVerbose :: Bool,
                          theList :: String,
                          overwrite :: Bool,
                          position :: String,
-                         entry :: String,
                          importance :: String,
                          confirm :: String,
                          sort :: String }
@@ -64,7 +66,6 @@ defaultOptions = Options { showVerbose = False,
                            theList = defaultList,
                            overwrite = False,
                            position = "",
-                           entry = "",
                            importance = "",
                            sort = "" }
 
@@ -92,9 +93,6 @@ doRemoveList removeName opts = return opts { theList = removeName }
 doPosition :: String -> Options -> IO Options
 doPosition pos opts = return opts { position = pos }
 
-doEntry :: String -> Options -> IO Options
-doEntry text opts = return opts { entry = text }
-
 doAddList :: String -> Options -> IO Options
 doAddList list opts = return opts { theList = list }
 
@@ -115,6 +113,7 @@ verboseOption desc = Option ['v'] ["verbose"] (NoArg doVerbose) desc
 programHelpOption = Option ['h'] ["help"] (NoArg doHelp) "show help information for this program"
 selectListOption = Option ['l'] ["list"] (ReqArg doShowList "LIST") "choose a list to display"
 sortOrderOption = Option ['s'] ["sort"] (ReqArg doSort "SORT ORDER") "specify an order for entries to be sorted in when they are presented"
+overwriteOption = Option ['o'] ["overwrite"] (NoArg doOverwrite) "overwrite an already existing list with a new empty list"
 
 {-- the main function --}
 
@@ -170,16 +169,17 @@ addOptions = [commandHelpOption
              ]
 
 add :: (Options, [String]) -> IO ()
-add (opts,_) = do putStrLn "Adding an entry."
-                  let chosenList = theList opts ++ ".txt"
-                      newEntry = entry opts   
-                  appDir <- getAppUserDataDirectory appName                   
-                  allLists <- getKnownLists configFilePath appDir                     
-                  currentTime <- getCurrentTime
-                  if chosenList `elem` allLists then do setCurrentDirectory appDir
-                                                        withFile chosenList ReadWriteMode (\handle -> do hPutStr handle $ formatTime defaultTimeLocale "\n%D (%X) - " currentTime 
-                                                                                                         hPutStrLn handle newEntry)
-                                                else ioError $ userError "The selected list does not exist"
+add (opts,remaining) = do putStrLn "Adding an entry."
+                          let chosenList = theList opts ++ ".txt"
+                          appDir <- getAppUserDataDirectory appName                   
+                          allLists <- getKnownLists configFilePath appDir                     
+                          currentTime <- getCurrentTime
+                          if chosenList `elem` allLists then do setCurrentDirectory appDir
+                                                                withFile chosenList AppendMode (\handle ->
+                                                                                                  mapM_ (\entry ->
+                                                                                                        do hPutStr handle $ formatTime defaultTimeLocale "%D (%X) - " currentTime
+                                                                                                           hPutStrLn handle entry) remaining)
+                                                        else ioError $ userError "The selected list does not exist."
 
 removeOptions :: [OptDescr OptionTransformer]
 removeOptions = [commandHelpOption
@@ -191,11 +191,23 @@ remove (opts,_) = do putStrLn "Removing an entry."
 
 createOptions :: [OptDescr OptionTransformer]
 createOptions = [commandHelpOption
+                ,selectListOption
+                ,overwriteOption
                 ]
 
 create :: (Options, [String]) -> IO ()
-create (opts,_) = do putStrLn "Creating a new list of entries."
-                     return ()
+create (opts,remaining) = do putStrLn "Creating a new list of entries."
+                             let newList = theList opts ++ ".txt"
+                             appDir <- getAppUserDataDirectory appName
+                             allLists <- getKnownLists configFilePath appDir
+                             currentTime <- getCurrentTime
+                             if (not (newList `elem` allLists)) || (overwrite opts) then do setCurrentDirectory appDir
+                                                                                            handle <- openFile newList WriteMode
+                                                                                            hPutStrLn handle newList 
+                                                                                            hPutStrLn handle $ formatTime defaultTimeLocale "Created on %D at: %X" currentTime
+                                                                                            hClose handle
+                                                                                            present (opts,remaining)
+                                                                                    else ioError $ userError "This list exists already. If you want to replace it with a new blank list, repeat this command with \"-o\"."
 
 helpOptions :: [OptDescr OptionTransformer]
 helpOptions = [commandHelpOption
@@ -223,8 +235,11 @@ configure appDir = do putStrLn "Creating appropriate directories and config file
 
 getKnownLists :: FilePath -> String -> IO [FilePath]
 getKnownLists configFilePath appDir= do setCurrentDirectory appDir
-                                        configFile <- openFile configFilePath ReadMode
-                                        lists <- getListsFromConfig configFile
+                                        --configFile <- openFile configFilePath ReadMode
+                                        --lists <- getListsFromConfig configFile
+                                        dirContents <- getDirectoryContents appDir
+                                        files <- filterM doesFileExist dirContents
+                                        let lists = filter (".txt" `List.isSuffixOf`) files
                                         return lists
                       
 getListsFromConfig :: Handle -> IO [FilePath]
