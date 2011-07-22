@@ -36,7 +36,7 @@ ok, for add, I can just take in all the arguments, and do a mapM on them, to add
 
 ------------------------------------------------------------------------------------------------------------------------
 
-I now have add and create and present working pretty much as I would like them to. I next should work on remove, which is absolutely teh most complicated command.
+I now have add and create and present working pretty much as I would like them to. I next should work on remove, which is absolutely the most complicated command.
 
 I should also make it so that you don't have to use a flag to specify a list when doing create, add, or show.
 
