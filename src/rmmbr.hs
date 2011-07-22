@@ -1,7 +1,7 @@
 --Filename: rmmbr.hs
 --Project: Rmmbr, a command-line program for handling reminders
 --Author: Spencer Gordon
---Date: July 22th, 2011
+--Date: July 22nd, 2011
 
 module Main where
 
@@ -280,8 +280,11 @@ reset :: (Options, [String]) -> IO ()
 reset (opts,_) = do putStrLn "Clearing all lists."
                     let confirm = overwrite opts
                     if confirm then do (_, allLists) <- getDirAndLists
+                                       mapM_ removeFile allLists
                                        return ()
-                               else return ()
+                               else do putStrLn "This will remove all your lists permanently. This operation cannot be undone. Do you want to proceed? (y / n)"
+                                       --FILL IN SO THAT THIS ACTUALLY WORKS
+                                       return ()
 
 configure :: FilePath -> IO ()
 configure appDir = do putStrLn "Creating appropriate directories and config files..."

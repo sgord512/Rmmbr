@@ -50,3 +50,13 @@ I should think about all that config-file stuff. Should I keep it? Fix it? Make 
 ------------------------------------------------------------------------------------------------------------------------
 
 Also, I am having a weird issue where ghc generates a stupendously long list of warnings during linking. This causes the make to fail, but it works fine if I symlink my toolbox in, and then make it in ghc.
+
+------------------------------------------------------------------------------------------------------------------------
+
+Ok, what do I have left to do?
+
+I should implemented RESET fully.
+
+I should add advanced functionality to remove and show. (by that I mean that you can do numerically and interactively in remove, and that you can change sort orders or do multiple lists in show)
+
+Then I should add priority, and deadlines, and maybe comments, either on the list itself or on the entries.
