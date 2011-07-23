@@ -25,6 +25,7 @@ version_log = [Version [0,3] ["fixed io"]
               ,Version [0,7] ["adding works","creating works"]
               ,Version [0,8] ["removing works","only first and last"]
               ,Version [0,9] ["polish"]
+              ,Version [1,0] ["first release", "all basic functionality in place and working"]
               ]
 
 appNamePretty = "Rmmbr"
@@ -37,93 +38,117 @@ defaultList = "todo"
 usageHelpHeader = "Usage: rmmbr [OPTION...] "
 headerLength = 2
 
-commands :: [(String, ((Options, [String]) -> IO (), [OptDescr OptionTransformer], String))]
-commands = [ ("show", (present, presentOptions, "view the contents of your todo lists"))
-           , ("add", (add, addOptions, "add an entry to one of your todo lists"))
-           , ("remove", (remove, removeOptions, "remove an entry from one of your todo lists"))
-           , ("create", (create, createOptions, "create a new todo list"))
-           , ("help", (help, helpOptions, "show this help information"))
-           , ("reset", (reset, resetOptions, "clear all your todo lists, and start over with no entries"))
+commands :: [(String, ((Options, [String]) -> IO (), [OptDescr OptionTransformer], OptionTransformer, String))]
+commands = [ ("show", (present, presentOptions, assumeLists, "view the contents of your todo lists"))
+           , ("add", (add, addOptions, (\opts -> return opts { nonOptsHandler = doEntry }), "add an entry to one of your todo lists"))
+           , ("remove", (remove, removeOptions, (\opts -> return opts { nonOptsHandler = doPosition }), "remove an entry from one of your todo lists"))
+           , ("create", (create, createOptions, assumeSelectList, "create a new todo list"))
+           , ("help", (help, helpOptions, return, "show this help information"))
+           , ("reset", (reset, resetOptions, return, "clear all your todo lists, and start over with no entries"))
            ]
 
+assumeLists :: OptionTransformer
+assumeLists opts = return opts { nonOptsHandler = doShowList }
 
-data Options = Options { showVerbose :: Bool,
+assumeSelectList :: OptionTransformer
+assumeSelectList opts = return opts { nonOptsHandler = doSelectList }
+
+data Options = Options { nonOptsHandler :: String -> OptionTransformer,
+                         showVerbose :: Bool,
                          showHelp :: Bool,
-                         theList :: String,
                          overwrite :: Bool,
-                         position :: Position,
+                         interactive :: Bool,
+                         position :: Either Position [Position],
+                         theShowList :: Either String [String],
+                         theList :: String,
+                         entries :: [String],
                          importance :: String,
                          confirm :: String,
-                         sort :: String,
-                         interactive :: Bool }
+                         sort :: String }
+
 
 data Position = First | Last
 
 defaultOptions :: Options
-defaultOptions = Options { showVerbose = False,
+defaultOptions = Options { nonOptsHandler = (\str -> (\opts -> return opts)),
+                           showVerbose = False,
                            showHelp = False,
-                           theList = defaultList,
                            overwrite = False,
-                           position = Last,
+                           interactive = False,
+                           position = Left Last,
+                           theShowList = Left defaultList,
+                           theList = defaultList,
+                           entries = [],
                            importance = "",
-                           sort = "",
-                           interactive = False }
+                           sort = "" }
+
 
 {-- all the optionTransformer actions are defined here --}
 
 type OptionTransformer = Options -> IO Options
 
-doVersion :: Options -> IO Options
+doVersion :: OptionTransformer
 doVersion opts = do putStrLn $ unlines $ map showVersion version_log
                     exitWith ExitSuccess
                     return opts 
 
-doVerbose :: Options -> IO Options
+doVerbose :: OptionTransformer
 doVerbose opts = do putStrLn "doVerbose" 
                     return opts { showVerbose = True }
 
-doCmdHelp :: [OptDescr OptionTransformer] -> Options -> IO Options
+doCmdHelp :: [OptDescr OptionTransformer] -> OptionTransformer
 doCmdHelp cmdOpts opts = do putStrLn $ usageInfo usageHelpHeader cmdOpts
                             exitWith ExitSuccess
                             return opts
 
-doHelp :: Options -> IO Options
+doHelp :: OptionTransformer
 doHelp opts = do putStrLn "doHelp"
                  return opts { showHelp = True }
 
-doOverwrite :: Options -> IO Options
+doOverwrite :: OptionTransformer
 doOverwrite opts = return opts { overwrite = True }
 
-doRemoveList :: String -> Options -> IO Options
+doRemoveList :: String -> OptionTransformer
 doRemoveList removeName opts = return opts { theList = removeName } 
+
+doEntry :: String -> OptionTransformer
+doEntry entry opts = return opts { entries = entry:(entries opts) }
 
 positions :: [(String, Position)]
 positions = [("first", First)
             ,("last", Last)
             ]
 
-doPosition :: String -> Options -> IO Options
+doPosition :: String -> OptionTransformer
 doPosition pos opts = do let result = lookup pos positions 
                          case result of
                               Nothing -> do ioError $ userError "The position you provided was invalid"
                                             exitFailure
                                             return opts
-                              Just safePos -> return opts { position = safePos }
+                              Just safePos -> return opts { position = case position opts of
+                                                                            Left _ -> Right [safePos]
+                                                                            Right positions -> Right (safePos:positions) }
 
-doAddList :: String -> Options -> IO Options
-doAddList list opts = return opts { theList = list }
+doSelectList :: String -> OptionTransformer
+doSelectList list opts = return opts { theList = list, nonOptsHandler = doEntry }
 
-doImportance :: String -> Options -> IO Options
+doImportance :: String -> OptionTransformer
 doImportance level opts = return opts { importance = level }
 
-doShowList :: String -> Options -> IO Options
-doShowList list opts = return opts { theList = list }
+doShowList :: String -> OptionTransformer
+doShowList list opts = return opts { theShowList = case theShowList opts of
+                                                        Left _ -> Right [list]
+                                                        Right lists -> Right (list:lists) }
 
-doSort :: String -> Options -> IO Options
+doSort :: String -> OptionTransformer
 doSort sortBy opts = return opts { sort = sortBy }
 
-doInteractiveRemove :: Options -> IO Options
+doInteractiveRemove :: OptionTransformer
 doInteractiveRemove opts = return opts { interactive = True }
+
+doNonOptsHandling :: String -> OptionTransformer
+doNonOptsHandling str opts = do opts' <- (nonOptsHandler opts) str opts
+                                return opts'
 
 {-- Different commonly occurring options will be defined here so they can be reused --}
 
@@ -131,7 +156,8 @@ commandHelpOption cmdOptions = Option ['h'] ["help"] (NoArg (doCmdHelp cmdOption
 versionOption = Option ['V'] ["version"] (NoArg doVersion) "show detailed version information, with changes from previous versions"
 verboseOption desc = Option ['v'] ["verbose"] (NoArg doVerbose) desc
 programHelpOption = Option ['h'] ["help"] (NoArg doHelp) "show help information for this program"
-selectListOption = Option ['l'] ["list"] (ReqArg doShowList "LIST") "choose a list to display"
+selectListOption = Option ['l'] ["list"] (ReqArg doSelectList "LIST") "select a list to be the target of your command"
+showListOption = Option ['l'] ["list"] (ReqArg doShowList "LIST") "specify which lists to display"
 sortOrderOption = Option ['s'] ["sort"] (ReqArg doSort "SORT ORDER") "specify an order for entries to be sorted in when they are presented"
 overwriteOption = Option ['o'] ["overwrite"] (NoArg doOverwrite) "overwrite an already existing list with a new empty list"
 positionOption = Option ['p'] ["position"] (ReqArg doPosition "POSITION") "specify an entry by its position in the selected list"
@@ -144,25 +170,25 @@ main = do putStr $ appNamePretty ++ ": "
           alreadyConfigured <- doesDirectoryExist appDir
           if alreadyConfigured then return () else configure appDir
           input <- getArgs
-          let (action,args,options) = if null input then (present, [], []) 
+          let (action,args, optsSetup, options) = if null input then (present, [], return, []) 
                                                     else case lookup (head input) commands of
-                                                         Just (act, opt, _) -> (act, tail input, opt)
-                                                         Nothing -> (present, input, presentOptions)
-          processedInput <- processInput args options
+                                                         Just (act, opt, optsSetup, _) -> (act, tail input, optsSetup, opt)
+                                                         Nothing -> (present, input, assumeLists, presentOptions)
+          processedInput <- processInput args options optsSetup
           action processedInput
 
 {-- Takes the arguments and the list of options and returns the processed options structure and the unrecognized arguments --}
 
-processInput :: [String] -> [OptDescr OptionTransformer] -> IO (Options, [String])
-processInput args options = do case getOpt RequireOrder options args of
-                                    (optionTransformations, nonOpts, []) -> do opts <- foldl (>>=) (return defaultOptions) optionTransformations
-                                                                               return (opts, nonOpts)
-                                    (_,_,errors) -> ioError $ userError $ ((unlines errors) ++ (usageInfo usageHelpHeader options))
+processInput :: [String] -> [OptDescr OptionTransformer] -> OptionTransformer -> IO (Options, [String])
+processInput args options optSetup = do case getOpt (ReturnInOrder doNonOptsHandling) options args of
+                                                     (optionTransformations, nonOpts, []) -> do opts <- foldl (>>=) (optSetup defaultOptions) optionTransformations
+                                                                                                return (opts, nonOpts)
+                                                     (_,_,errors) -> ioError $ userError $ ((unlines errors) ++ (usageInfo usageHelpHeader options))
 
 {-- Shows a list or group of lists --}
 
 presentOptions :: [OptDescr OptionTransformer]
-presentOptions = [selectListOption
+presentOptions = [showListOption
                  ,verboseOption "show more detailed version of selected lists"
                  ,sortOrderOption
                  ,commandHelpOption presentOptions
@@ -170,13 +196,17 @@ presentOptions = [selectListOption
                  ]
 
 present :: (Options, [String]) -> IO ()
-present (opts,_) = do putStrLn "Showing all entries."
-                      let chosenList = theList opts ++ ".txt"
-                      (appDir, allLists) <- getDirAndLists
-                      if chosenList `elem` allLists then do setCurrentDirectory appDir
-                                                            withFile chosenList ReadMode (\handle -> do contents <- hGetContents handle
-                                                                                                        putStrLn contents)
-                                                    else ioError $ userError $ "The selected list does not exist: " ++ chosenList
+present (opts,remaining) = do putStrLn "Showing all entries."
+                              chosenList <- case theShowList opts of
+                                            Left list -> return $ list ++ ".txt"
+                                            Right (list:[]) -> return $ list ++ ".txt"
+                                            Right (list:lists) -> do present $ (opts {theShowList = Right lists}, remaining)
+                                                                     return $ list ++ ".txt"
+                              (appDir, allLists) <- getDirAndLists
+                              if chosenList `elem` allLists then do setCurrentDirectory appDir
+                                                                    withFile chosenList ReadMode (\handle -> do contents <- hGetContents handle
+                                                                                                                putStrLn contents)
+                                                            else ioError $ userError $ "The selected list does not exist: " ++ chosenList
 
 {-- Adds one or more entries to a list --}
 
@@ -194,7 +224,7 @@ add (opts,remaining) = do putStrLn "Adding an entry."
                                                                 withFile chosenList AppendMode (\handle ->
                                                                                                   mapM_ (\entry ->
                                                                                                         do hPutStr handle $ formatTime defaultTimeLocale "%D (%X) - " currentTime
-                                                                                                           hPutStrLn handle entry) remaining)
+                                                                                                           hPutStrLn handle entry) (entries opts))
                                                         else ioError $ userError "The selected list does not exist."
 
 {-- Removes one or more entries from a list --}
@@ -215,8 +245,9 @@ remove (opts,remaining) = do putStrLn "Removing an entry."
                              contents <- readFile tempFile
                              let (header,entries) = splitAt headerLength $ lines contents
                                  (removed,kept) = case chosenPosition of 
-                                                       First -> (head entries, tail entries) 
-                                                       Last -> (last entries, init entries)
+                                                       Left Last -> (head entries, tail entries) 
+                                                       Right (Last:others) -> (last entries, init entries)
+                                                       Right (First:others) -> (head entries, tail entries)
                              putStrLn $ "Removing: " ++ removed
                              handle <- openFile chosenList WriteMode
                              hPutStr handle $ unlines $ header ++ kept
@@ -247,7 +278,7 @@ create (opts,remaining) = do putStrLn "Creating a new list of entries."
                              (appDir, allLists) <- getDirAndLists
                              if (not (newList `elem` allLists)) || (overwrite opts) then do setCurrentDirectory appDir
                                                                                             createList newList
-                                                                                            present (opts,remaining)
+                                                                                            present (opts { theShowList = Left (theList opts) } ,remaining)
                                                                                     else ioError $ userError "This list exists already. If you want to replace it with a new blank list, repeat this command with \"-o\"."
 
 createList :: FilePath -> IO ()
@@ -266,7 +297,7 @@ helpOptions = [commandHelpOption helpOptions
 help :: (Options, [String]) -> IO ()
 help (opts,_) = do putStrLn "Displaying help for the program."
                    let (cmd, cmdData) = unzip commands 
-                       (_, _, helpText) = unzip3 cmdData
+                       (_, _, _, helpText) = List.unzip4 cmdData
                    putStrLn $ inTwoColumns $ zip cmd helpText
 
 {-- Clear all application data --}
@@ -281,6 +312,7 @@ reset (opts,_) = do putStrLn "Clearing all lists."
                     let confirm = overwrite opts
                     if confirm then do (_, allLists) <- getDirAndLists
                                        mapM_ removeFile allLists
+                                       createList defaultFile
                                        return ()
                                else do putStrLn "This will remove all your lists permanently. This operation cannot be undone. Do you want to proceed? (y / n)"
                                        --FILL IN SO THAT THIS ACTUALLY WORKS
