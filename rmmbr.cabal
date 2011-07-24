@@ -12,7 +12,7 @@ Version:             1.0
 Synopsis:            A Command Line Program for Managing To-Do Lists
 
 -- A longer description of the package.
--- Description:         
+Description: A simple program that controls a set of todo lists via the command line. Originally conceived as a way to teach myself Haskell, it might be useful to others.
 
 -- URL for the project homepage or repository.
 Homepage:            https://github.com/sgord512/Rmmbr
@@ -31,7 +31,7 @@ Author:              Spencer Gordon
 Maintainer:          sgord512@gmail.com
 
 -- A copyright notice.
--- Copyright:           
+Copyright:          (c) 2011 Spencer Gordon
 
 Category:            Console
 
@@ -39,7 +39,7 @@ Build-type:          Simple
 
 -- Extra files to be distributed with the package, such as examples or
 -- a README.
--- Extra-source-files:  
+Extra-source-files: README
 
 -- Constraint on the version of Cabal needed to build this package.
 Cabal-version:       >=1.2
@@ -47,13 +47,17 @@ Cabal-version:       >=1.2
 
 Executable rmmbr
   -- .hs or .lhs file containing the Main module.
-  -- Main-is:             
+  Main-is: rmmbr.hs
   
   -- Packages needed in order to build this package.
-  -- Build-depends:       
+  Build-depends: base >= 4.3 && < 5,
+                 time >= 1.2,
+                 directory >= 1.1,
+                 old-locale >= 1.0
   
+  Hs-Source-Dirs: src
   -- Modules not exported by this package.
-  -- Other-modules:       
+  Other-modules:  Toolbox
   
   -- Extra tools (e.g. alex, hsc2hs, ...) needed to build the source.
   -- Build-tools:         
