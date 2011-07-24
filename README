@@ -60,3 +60,21 @@ I should implemented RESET fully.
 I should add advanced functionality to remove and show. (by that I mean that you can do numerically and interactively in remove, and that you can change sort orders or do multiple lists in show)
 
 Then I should add priority, and deadlines, and maybe comments, either on the list itself or on the entries.
+
+------------------------------------------------------------------------------------------------------------------------
+
+Ok, to implement the idea of default options, what I want to do is give the Options object another field, that is a function for handling any unused strings that go its way.
+
+Here is a bug I have found. This is actually a major, MAJOR, MAJOR MAJOR problem. I cannot add entries because all the things in remaining, which previously were the entries are now sequentially becoming theList.
+
+I need to limit theList to only taking the first thing it sees.
+
+------------------------------------------------------------------------------------------------------------------------
+
+Ok, I have now fixed the bug, and I believe it is working entirely correctly. The only problem is that remove only allows one position at a time, and will ignore all subsequent ones.
+Also, interactive mode doesn't work.
+Also, sort order and showing all lists don't work.
+
+------------------------------------------------------------------------------------------------------------------------
+
+But I'm ready to call this version 1.0.
