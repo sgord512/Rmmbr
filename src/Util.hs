@@ -8,7 +8,9 @@ module Util where
 import Control.Monad
 import Data.Array
 import Data.List( isSuffixOf )
+import Data.Maybe( fromJust )
 import Data.Time
+import Data.Tuple( swap )
 import System.Console.ANSI
 import System.Console.GetOpt
 import System.Directory
@@ -20,12 +22,14 @@ import Text.Parsec.Combinator
 import Text.Parsec.String
 
 appName = "rmmbr"
+dateTimeString = "%m/%d/%Y (%R %P)"
 decoLength = 30 
 decoChar = '*'
 defaultSort = "def"
 defaultListFile = "todo.txt"
 headerLength = 2
 usageHelpHeader = "Usage: rmmbr [OPTION...] "
+
 
 {-- Defining OptionTransformer and the handler for invalid arguments --}
 
@@ -206,3 +210,63 @@ markEntryOrThrowError i arr = if i `notElem` (indices arr) then error "Invalid p
                                                            else case (arr ! i) of
                                                                      (True, _) -> error "The same position marked twice. Aborting"
                                                                      (False, entry) -> arr // [(i, (True, entry))]
+
+{-- a wrapper around ioError and userError --}
+
+inputError :: String -> IO a
+inputError msg = ioError $ userError msg
+
+{-- The definition of Entry data --}
+
+data Entry = Entry UTCTime Title CompletionStatus Importance Comment 
+     deriving (Show)
+type Title = String
+type Comment = String 
+
+data Importance = Low | Medium | High
+     deriving (Eq, Ord, Show, Read, Bounded, Enum)
+
+data CompletionStatus = NotStarted | InProgress | Complete
+     deriving (Eq, Ord, Show, Read, Bounded, Enum)
+
+{-- Parser for entries --}
+
+entry :: Parser Entry 
+entry = do{ utcString <- (liftM unwords) ((many1 $ try $ noneOf [' ','-']) `endBy1` (char ' '))
+          ; char '-' >> space
+          ; importance <- importanceParser
+          ; spaces
+          ; completionStatus <- between (char '[') (char ']') compStatusParser
+          ; space >> char '-' >> space
+          ; title <- manyTill anyChar (char ':')
+          ; space
+          ; comment <- manyTill anyChar eof
+          ; return (Entry (readTime defaultTimeLocale dateTimeString utcString)
+                          title
+                          completionStatus
+                          importance
+                          comment)
+          }
+
+
+compStatusParser :: Parser CompletionStatus
+compStatusParser = liftM (rLookupSafe compStatusCharMap) (oneOf $ map (\(_, c) -> c) compStatusCharMap)
+
+compStatusCharMap :: [(CompletionStatus, Char)]
+compStatusCharMap = [(Complete, 'X')
+                    ,(InProgress, '~')
+                    ,(NotStarted, ' ')
+                    ]
+
+importanceParser :: Parser Importance
+importanceParser = liftM (rLookupSafe importanceCharMap) (oneOf $ map (\(_, c) -> c) importanceCharMap)
+
+importanceCharMap :: [(Importance, Char)]
+importanceCharMap = [(High, 'H')
+                    ,(Medium, 'M')
+                    ,(Low, 'L')
+                    ]
+
+
+rLookupSafe :: [(a, Char)] -> Char -> a
+rLookupSafe assocList = fromJust . ((flip lookup) (map swap assocList))

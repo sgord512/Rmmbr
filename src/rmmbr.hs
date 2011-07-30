@@ -20,7 +20,7 @@ import System.IO
 import System.Locale
 import Text.Parsec.Prim
 
-import Toolbox( inTwoColumns )
+import Toolbox( inTwoColumns, padFrontUntilLength )
 import Util
 
 versionLog = [Version [0,3] ["fixed io"]
@@ -32,6 +32,7 @@ versionLog = [Version [0,3] ["fixed io"]
              ,Version [0,9] ["polish"]
              ,Version [1,0] ["first release", "all basic functionality in place and working"]
              ,Version [1,1] ["THE ACTUAL FIRST RELEASE", "REMOVE WORKS LIKE MAGIC"]
+             ,Version [1,2] ["importance, completion, comment", "more formatting"]
              ]
 
 appNamePretty = "Rmmbr"
@@ -58,10 +59,10 @@ assumeSelectList opts = return opts { nonOptsHandler = doSelectList }
 doVersion :: OptionTransformer
 doVersion opts = do putStrLn $ unlines $ map showVersion versionLog
                     exitWith ExitSuccess
-                    return opts 
+                    return opts
 
 doVerbose :: OptionTransformer
-doVerbose opts = do putStrLn "doVerbose" 
+doVerbose opts = do putStrLn "doVerbose"
                     return opts { showVerbose = True }
 
 doCmdHelp :: [OptDescr OptionTransformer] -> OptionTransformer
@@ -77,14 +78,14 @@ doOverwrite :: OptionTransformer
 doOverwrite opts = return opts { overwrite = True }
 
 doRemoveList :: String -> OptionTransformer
-doRemoveList removeName opts = return opts { theList = removeName ++ ".txt" } 
+doRemoveList removeName opts = return opts { theList = removeName ++ ".txt" }
 
 doEntry :: String -> OptionTransformer
 doEntry entry opts = return opts { entries = entry:(entries opts) }
 
 doPosition :: String -> OptionTransformer
 doPosition str opts = case (parse positionArg "position arguments" str) of
-                      Left err -> ioError $ userError $ show err
+                      Left err -> inputError $ show err
                       Right pos -> return opts { position = case position opts of
                                                                  Left _ -> Right [pos]
                                                                  Right ps -> Right (pos:ps) }
@@ -107,8 +108,8 @@ doShowList list opts = return opts { theShowList = case theShowList opts of
 --doInteractiveRemove opts = return opts { interactive = True }
 
 doAllLists :: OptionTransformer
-doAllLists opts = do (_, allLists) <- getDirAndLists                     
-                     foldl (>>=) (return opts {nonOptsHandler = throwUserError} ) (map (doShowList . takeWhile (\char -> not (char == '.'))) allLists)                      
+doAllLists opts = do (_, allLists) <- getDirAndLists
+                     foldl (>>=) (return opts {nonOptsHandler = throwUserError} ) (map (doShowList . takeWhile (\char -> not (char == '.'))) allLists)
 
 
 {-- Different commonly occurring options will be defined here so they can be reused --}
@@ -133,7 +134,7 @@ main = do --putStr $ appNamePretty ++ ": "
           alreadyConfigured <- doesDirectoryExist appDir
           unless alreadyConfigured $ configure
           input <- getArgs
-          let (action,args, optsSetup, options) = if null input then (present, [], return, []) 
+          let (action,args, optsSetup, options) = if null input then (present, [], return, [])
                                                                 else case lookup (head input) commands of
                                                                      Just (act, opt, optsSetup, _) -> (act, tail input, optsSetup, opt)
                                                                      Nothing -> (present, input, assumeLists, presentOptions)
@@ -159,11 +160,15 @@ present (opts,remaining) = do --putStrLn "Showing all entries."
                                                             Right list -> return ((last list), opts {theShowList = Right (init list)})
                               (appDir, allLists) <- getDirAndLists
                               if chosenList `elem` allLists then do setCurrentDirectory appDir
-                                                                    withFile chosenList ReadMode (\handle -> do contents <- hGetContents handle
-                                                                                                                putStrLn contents)
-                                                            else ioError $ userError $ "The selected list does not exist: " ++ chosenList
+                                                                    (header, entries) <- getHeaderAndEntries chosenList
+                                                                    let sep = words (head header)
+                                                                        title = (putStr $ (head sep) ++ " "):((putStr `withColor` Yellow) $ sep !! 1):(putStrLn $ " " ++ (last sep)):(putStrLn (last header)):[]
+                                                                    sequence_ title
+                                                                    let maxDigits = length $ show $ length entries
+                                                                    sequence_ $ zipWith (>>) (map (\num -> (putStr `withColor` Magenta) ((padFrontUntilLength ' ' maxDigits (show num)) ++ " ")) [1,2..]) (map putStrLn entries)
+                                                            else inputError $ "The selected list does not exist: " ++ chosenList
                               unless (theShowList newOpts == Right []) $ present (newOpts, remaining)
-                                                                       
+
 
 {-- Adds one or more entries to a list --}
 
@@ -176,14 +181,14 @@ add :: (Options, [String]) -> IO ()
 add (opts,remaining) = do --putStrLn "Adding an entry."
                           let chosenList = theList opts
                               entries' = reverse $ entries opts
-                          (appDir, allLists) <- getDirAndLists              
+                          (appDir, allLists) <- getDirAndLists
                           currentTime <- getCurrentTime
                           if chosenList `elem` allLists then do setCurrentDirectory appDir
                                                                 withFile chosenList AppendMode (\handle ->
                                                                                                   mapM_ (\entry ->
-                                                                                                        do hPutStr handle $ formatTime defaultTimeLocale "%D (%X) - " currentTime
+                                                                                                        do hPutStr handle $ ((formatTime defaultTimeLocale dateTimeString currentTime) ++ " - ")
                                                                                                            hPutStrLn handle entry) entries')
-                                                        else ioError $ userError "The selected list does not exist."
+                                                        else inputError "The selected list does not exist."
 
 {-- Removes one or more entries from a list --}
 
@@ -195,23 +200,24 @@ removeOptions = [commandHelpOption removeOptions
 
 remove :: (Options, [String]) -> IO ()
 remove (opts,remaining) = do --putStrLn "Removing an entry."
-                             let chosenList = theList opts 
-                                 positions = case position opts of 
+                             let chosenList = theList opts
+                                 positions = case position opts of
                                                   Left pos -> [pos]
                                                   Right ps -> ps
                              (appDir, allLists) <- getDirAndLists
-                             unless (chosenList `elem` allLists) $ ioError $ userError "The selected list does not exist."
+                             unless (chosenList `elem` allLists) $ inputError "The selected list does not exist."
                              (header,entries) <- getHeaderAndEntries chosenList
                              putStrLn "Showing list:"
-                             sequence_ $ zipWith (>>) (map (\num -> (putStr `withColor` Cyan) (show num ++ " ")) [1,2..]) (map putStrLn entries)
+                             let maxDigits = length $ show $ length entries
+                             sequence_ $ zipWith (>>) (map (\num -> (putStr `withColor` Cyan) ((padFrontUntilLength ' ' maxDigits (show num)) ++ " ")) [1,2..]) (map putStrLn entries)
                              putStrLn "End of shown list."
-                             let arr = listArray (1, length entries) (zip (repeat False) entries)                             
+                             let arr = listArray (1, length entries) (zip (repeat False) entries)
                                  (removed',kept') = partition (\(rm, _) -> rm) (elems (foldl removePositionFromList arr positions))
                                  (removed, kept) = ((snd $ unzip removed'), (snd $ unzip kept'))
                              sequence_ $ zipWith (>>) (map (\x -> putStr "Removing: ") [1,2..]) (map (\r -> (putStrLn `withColor` Red) r) removed)
                              writeFile chosenList $ unlines $ header ++ kept
                              present (opts,remaining)
-{-- Creates a new list --}           
+{-- Creates a new list --}
 
 createOptions :: [OptDescr OptionTransformer]
 createOptions = [commandHelpOption createOptions
@@ -221,12 +227,12 @@ createOptions = [commandHelpOption createOptions
 
 create :: (Options, [String]) -> IO ()
 create (opts,remaining) = do --putStrLn "Creating a new list of entries."
-                             let newList = theList opts 
+                             let newList = theList opts
                              (appDir, allLists) <- getDirAndLists
                              if (newList `notElem` allLists) || (overwrite opts) then do setCurrentDirectory appDir
                                                                                          createList newList
                                                                                          present (opts { theShowList = Left (theList opts) } ,remaining)
-                                                                                 else ioError $ userError "This list exists already. If you want to replace it with a new blank list, repeat this command with \"-o\"."
+                                                                                 else inputError "This list exists already. If you want to replace it with a new blank list, repeat this command with \"-o\"."
 
 {-- Show help information --}
 
@@ -236,12 +242,12 @@ helpOptions = [commandHelpOption helpOptions
 
 help :: (Options, [String]) -> IO ()
 help (opts,_) = do --putStrLn "Displaying help for the program."
-                   let (cmd, cmdData) = unzip commands 
+                   let (cmd, cmdData) = unzip commands
                        (_, _, _, helpText) = unzip4 cmdData
                    putStrLn $ inTwoColumns $ zip cmd helpText
 
 {-- Clear all application data --}
-                       
+
 resetOptions :: [OptDescr OptionTransformer]
 resetOptions = [commandHelpOption resetOptions
                ,overwriteOption
