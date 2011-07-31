@@ -20,8 +20,9 @@ import System.IO
 import System.Locale
 import Text.Parsec.Prim
 
-import Toolbox( inTwoColumns, padFrontUntilLength )
+import Toolbox( inTwoColumns, padFrontUntilLength, withColor )
 import Util
+import Entry
 
 versionLog = [Version [0,3] ["fixed io"]
              ,Version [0,4] ["almost stable"]
@@ -33,6 +34,7 @@ versionLog = [Version [0,3] ["fixed io"]
              ,Version [1,0] ["first release", "all basic functionality in place and working"]
              ,Version [1,1] ["THE ACTUAL FIRST RELEASE", "REMOVE WORKS LIKE MAGIC"]
              ,Version [1,2] ["importance, completion, comment", "more formatting"]
+             ,Version [1,3] ["integrated advanced entries", "refactoring and documentation"]
              ]
 
 appNamePretty = "Rmmbr"
@@ -43,7 +45,7 @@ commands = [ ("show", (present, presentOptions, assumeLists, "view the contents 
            , ("add", (add, addOptions, (\opts -> return opts { nonOptsHandler = doEntry }), "add an entry to one of your todo lists"))
            , ("remove", (remove, removeOptions, (\opts -> return opts { nonOptsHandler = doPosition }), "remove an entry from one of your todo lists"))
            , ("create", (create, createOptions, assumeSelectList, "create a new todo list"))
-           , ("help", (help, helpOptions, return, "show this help information"))
+           , ("help", (help, helpOptions, (\opts -> return opts { nonOptsHandler = doHelpForCommand }), "show this help information"))
            , ("reset", (reset, resetOptions, return, "clear all your todo lists, and start over with no entries"))
            ]
 
@@ -70,9 +72,8 @@ doCmdHelp cmdOpts opts = do putStrLn $ usageInfo usageHelpHeader cmdOpts
                             exitWith ExitSuccess
                             return opts
 
-doHelp :: OptionTransformer
-doHelp opts = do putStrLn "doHelp"
-                 return opts { showHelp = True }
+doHelpForCommand :: String -> OptionTransformer
+doHelpForCommand cmd opts = do return opts { helpCmd = (Just cmd), nonOptsHandler = throwUserError }
 
 doOverwrite :: OptionTransformer
 doOverwrite opts = return opts { overwrite = True }
@@ -119,7 +120,6 @@ doAllLists opts = do (_, allLists) <- getDirAndLists
 commandHelpOption cmdOptions = Option ['h'] ["help"] (NoArg (doCmdHelp cmdOptions)) "shows this message"
 versionOption = Option ['V'] ["version"] (NoArg doVersion) "show detailed version information, with changes from previous versions"
 verboseOption desc = Option ['v'] ["verbose"] (NoArg doVerbose) desc
-programHelpOption = Option ['h'] ["help"] (NoArg doHelp) "show help information for this program"
 selectListOption = Option ['l'] ["list"] (ReqArg doSelectList "LIST") "select a list to be the target of your command"
 showListOption = Option ['l'] ["list"] (ReqArg doShowList "LIST") "specify which lists to display"
 --sortOrderOption = Option ['s'] ["sort"] (ReqArg doSort "SORT ORDER") "specify an order for entries to be sorted in when they are presented"
@@ -241,9 +241,16 @@ helpOptions = [commandHelpOption helpOptions
 
 help :: (Options, [String]) -> IO ()
 help (opts,_) = do --putStrLn "Displaying help for the program."
-                   let (cmd, cmdData) = unzip commands
-                       (_, _, _, helpText) = unzip4 cmdData
-                   putStrLn $ inTwoColumns $ zip cmd helpText
+                   case helpCmd opts of 
+                        Nothing -> do let (cmd, cmdData) = unzip commands
+                                          (_, _, _, helpText) = unzip4 cmdData
+                                      putStrLn $ inTwoColumns $ zip cmd helpText
+                        Just cmd -> do case lookup cmd commands of
+                                            Nothing -> do putStrLn "Command not recognized. For a list of commands, try \"help\" with no arguments."
+                                                          exitFailure
+                                            Just (_, cmdOpts, _, helpText) -> do putStrLn $ inTwoColumns $ zip [cmd] [helpText]
+                                                                                 doCmdHelp cmdOpts opts
+                                                                                 exitSuccess
 
 {-- Clear all application data --}
 
@@ -265,4 +272,5 @@ reset (opts,_) = do --putStrLn "Clearing all lists."
                                                            mapM_ removeFile allLists
                                                            createList defaultListFile
                                                            return ()
+
 

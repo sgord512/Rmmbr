@@ -11,7 +11,6 @@ import Data.Either( partitionEithers )
 import Data.List( isSuffixOf )
 import Data.Maybe( fromJust )
 import Data.Time
-import Data.Tuple( swap )
 import System.Console.ANSI
 import System.Console.GetOpt
 import System.Directory
@@ -23,8 +22,9 @@ import Text.Parsec.Char
 import Text.Parsec.Combinator
 import Text.Parsec.String
 
+import Entry
+
 appName = "rmmbr"
-dateTimeString = "%m/%d/%Y (%R %P)"
 decoLength = 30
 decoChar = '*'
 defaultSort = "def"
@@ -47,7 +47,7 @@ doNonOptsHandling str opts = do (nonOptsHandler opts) str opts
 
 data Options = Options { nonOptsHandler :: String -> OptionTransformer,
                          showVerbose :: Bool,
-                         showHelp :: Bool,
+                         helpCmd :: Maybe String,
                          overwrite :: Bool,
 --                         interactive :: Bool,
                          position :: Either Position [Position],
@@ -59,6 +59,29 @@ data Options = Options { nonOptsHandler :: String -> OptionTransformer,
                          sort :: String }
 
 data Position = First | Last | Index Int | RIndex Int | Range Int Int | RRange Int Int
+
+{-- Takes the arguments and the list of options and returns the processed options structure and the unrecognized arguments --}
+
+processInput :: [String] -> [OptDescr OptionTransformer] -> OptionTransformer -> IO (Options, [String])
+processInput args options optSetup = case getOpt (ReturnInOrder doNonOptsHandling) options args of
+                                          (optionTransformations, nonOpts, []) -> do opts <- foldl (>>=) (optSetup defaultOptions) optionTransformations
+                                                                                     return (opts, nonOpts)
+                                          (_,_,errors) -> ioError $ userError $ ((unlines errors) ++ (usageInfo usageHelpHeader options))
+
+{-- The default Options type to be folded upon --}
+
+defaultOptions :: Options
+defaultOptions = Options { nonOptsHandler = throwUserError,
+                           showVerbose = False,
+                           helpCmd = Nothing,
+                           overwrite = False,
+--                           interactive = False,
+                           position = Left Last,
+                           theShowList = Left defaultListFile,
+                           theList = defaultListFile,
+                           entries = [],
+                           importance = "",
+                           sort = "" }
 
 {-- Helper Functions --}
 
@@ -115,31 +138,6 @@ getEntries' file handle = do eof <- hIsEOF handle
                                                            entries <- getEntries' file handle
                                                            return (e:entries)
 
-
-{-- Takes the arguments and the list of options and returns the processed options structure and the unrecognized arguments --}
-
-processInput :: [String] -> [OptDescr OptionTransformer] -> OptionTransformer -> IO (Options, [String])
-processInput args options optSetup = case getOpt (ReturnInOrder doNonOptsHandling) options args of
-                                          (optionTransformations, nonOpts, []) -> do opts <- foldl (>>=) (optSetup defaultOptions) optionTransformations
-                                                                                     return (opts, nonOpts)
-                                          (_,_,errors) -> ioError $ userError $ ((unlines errors) ++ (usageInfo usageHelpHeader options))
-
-{-- The default Options type to be folded upon --}
-
-defaultOptions :: Options
-defaultOptions = Options { nonOptsHandler = throwUserError,
-                           showVerbose = False,
-                           showHelp = False,
-                           overwrite = False,
---                           interactive = False,
-                           position = Left Last,
-                           theShowList = Left defaultListFile,
-                           theList = defaultListFile,
-                           entries = [],
-                           importance = "",
-                           sort = "" }
-
-
 {-- Initializes a list with a header --}
 
 createList :: FilePath -> IO ()
@@ -148,11 +146,6 @@ createList newList = do handle <- openFile newList WriteMode
                         hPutStrLn handle $ (replicate decoLength decoChar) ++ " " ++ newList ++ " " ++ (replicate decoLength decoChar)
                         hPutStrLn handle $ formatTime defaultTimeLocale "Created on %D at: %X" currentTime
                         hClose handle
-
-{-- Do an IO action with a different foreground text color --}
-
-withColor :: (a -> IO ()) -> Color -> (a -> IO ())
-withColor output color = (\a -> setSGR [SetColor Foreground Vivid color] >> output a >> setSGR [])
 
 {-- This is the full parser for a position argument, which just adds first and last to the other parsers --}
 
@@ -221,123 +214,4 @@ markEntryOrThrowError i arr = if i `notElem` (indices arr) then error "Invalid p
 
 inputError :: String -> IO a
 inputError msg = ioError $ userError msg
-
-{-- The definition of Entry data --}
-
-data Entry = Entry AddTime Title CompletionStatus Importance Comment
-
-newtype Title = MakeTitle String
-newtype Comment = MakeComment String
-data AddTime = MakeAddTime UTCTime
-
-data Importance = Low | Medium | High
-     deriving (Eq, Ord, Bounded, Enum)
-
-data CompletionStatus = NotStarted | InProgress | Complete
-     deriving (Eq, Ord, Bounded, Enum)
-
-{-- Parser for entries --}
-
-entry :: Parser Entry
-entry = do{ utcString <- (liftM unwords) ((many1 $ try $ noneOf [' ','-']) `endBy1` (char ' '))
-          ; char '-' >> space
-          ; importance <- importanceParser
-          ; spaces
-          ; completionStatus <- between (char '[') (char ']') compStatusParser
-          ; space >> char '-' >> space
-          ; title <- manyTill anyChar (char ':')
-          ; space
-          ; comment <- manyTill anyChar eof
-          ; return (Entry (MakeAddTime (readTime defaultTimeLocale dateTimeString utcString))
-                          (MakeTitle title)
-                          completionStatus
-                          importance
-                          (MakeComment comment))
-          }
-
-compStatusParser :: Parser CompletionStatus
-compStatusParser = liftM (rLookupSafe compStatusCharMap) (oneOf $ map (\(_, c) -> c) compStatusCharMap)
-
-compStatusCharMap :: [(CompletionStatus, Char)]
-compStatusCharMap = [(Complete, 'X')
-                    ,(InProgress, '~')
-                    ,(NotStarted, ' ')
-                    ]
-
-importanceParser :: Parser Importance
-importanceParser = liftM (rLookupSafe importanceCharMap) (oneOf $ map (\(_, c) -> c) importanceCharMap)
-
-importanceCharMap :: [(Importance, Char)]
-importanceCharMap = [(High, 'H')
-                    ,(Medium, 'M')
-                    ,(Low, 'L')
-                    ]
-
-
-rLookupSafe :: [(a, Char)] -> Char -> a
-rLookupSafe assocList = fromJust . ((flip lookup) (map swap assocList))
-
-instance Show Entry where
-         show (Entry addTime title compStatus importance comment) = show addTime ++
-                                                                    " - " ++
-                                                                    show importance ++
-                                                                    " " ++
-                                                                    show compStatus ++
-                                                                    " - " ++
-                                                                    show title ++
-                                                                    ": " ++
-                                                                    show comment
-
-instance Show Importance where
-         show i = [fromJust $ lookup i importanceCharMap]
-
-instance Show CompletionStatus where
-         show c = '[':(fromJust $ lookup c compStatusCharMap):']':[]
-
-instance Show AddTime where
-         show (MakeAddTime addTime) = formatTime defaultTimeLocale dateTimeString addTime
-
-instance Show Title where
-         show (MakeTitle t) = t
-
-instance Show Comment where
-         show (MakeComment c) = c
-
-class CP a where
-      colorPrint :: a -> IO ()
-
-instance CP Entry where
-         colorPrint (Entry addTime title compStatus importance comment) = sequence_  [colorPrint addTime
-                                                                                     ,putStr " - "
-                                                                                     ,colorPrint importance
-                                                                                     ,putStr " "
-                                                                                     ,colorPrint compStatus
-                                                                                     ,putStr " - "
-                                                                                     ,colorPrint title
-                                                                                     ,putStr ": "
-                                                                                     ,colorPrint comment
-                                                                                     ,putStrLn ""
-                                                                                     ]
-
-instance CP AddTime where
-         colorPrint = putStr . show
-
-instance CP Importance where
-         colorPrint i = do let color = case i of
-                                            High -> Red
-                                            Medium -> Yellow
-                                            Low -> White
-                           (putChar `withColor` color) (fromJust $ lookup i importanceCharMap)
-
-instance CP CompletionStatus where
-         colorPrint = putStr . show
-
-instance CP Title where
-         colorPrint (MakeTitle t) = putStr t
-
-instance CP Comment where
-         colorPrint (MakeComment c) = putStr c
-
-
-
 
