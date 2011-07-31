@@ -42,8 +42,12 @@ Then, fit those into lists.
 Also, make sure to pad the numbers when printing them.
 
 
+
+
+
 ****************************************************************************************************
 
 KNOWN BUGS GO HERE: 
 
-oh wait, I don't have any known bugs.
+it will always record the time that you entered something in UTC, without the right time zone, which is annoying, but it turns out to be actually quite difficult to figure out what is a better alternative, because what do you want to do if someone is adding something in multiple time zones?
+

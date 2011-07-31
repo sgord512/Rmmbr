@@ -81,7 +81,9 @@ doRemoveList :: String -> OptionTransformer
 doRemoveList removeName opts = return opts { theList = removeName ++ ".txt" }
 
 doEntry :: String -> OptionTransformer
-doEntry entry opts = return opts { entries = entry:(entries opts) }
+doEntry title opts = do utcTime <- getCurrentTime
+                        let entry = (Entry (MakeAddTime utcTime) (MakeTitle title) NotStarted Medium (MakeComment "(default comment)"))
+                        return opts { entries = entry:(entries opts) }
 
 doPosition :: String -> OptionTransformer
 doPosition str opts = case (parse positionArg "position arguments" str) of
@@ -165,7 +167,7 @@ present (opts,remaining) = do --putStrLn "Showing all entries."
                                                                         title = (putStr $ (head sep) ++ " "):((putStr `withColor` Yellow) $ sep !! 1):(putStrLn $ " " ++ (last sep)):(putStrLn (last header)):[]
                                                                     sequence_ title
                                                                     let maxDigits = length $ show $ length entries
-                                                                    sequence_ $ zipWith (>>) (map (\num -> (putStr `withColor` Magenta) ((padFrontUntilLength ' ' maxDigits (show num)) ++ " ")) [1,2..]) (map putStrLn entries)
+                                                                    sequence_ $ zipWith (>>) (map (\num -> (putStr `withColor` Magenta) ((padFrontUntilLength ' ' maxDigits (show num)) ++ " ")) [1,2..]) (map colorPrint entries)
                                                             else inputError $ "The selected list does not exist: " ++ chosenList
                               unless (theShowList newOpts == Right []) $ present (newOpts, remaining)
 
@@ -184,10 +186,7 @@ add (opts,remaining) = do --putStrLn "Adding an entry."
                           (appDir, allLists) <- getDirAndLists
                           currentTime <- getCurrentTime
                           if chosenList `elem` allLists then do setCurrentDirectory appDir
-                                                                withFile chosenList AppendMode (\handle ->
-                                                                                                  mapM_ (\entry ->
-                                                                                                        do hPutStr handle $ ((formatTime defaultTimeLocale dateTimeString currentTime) ++ " - ")
-                                                                                                           hPutStrLn handle entry) entries')
+                                                                withFile chosenList AppendMode (\handle -> mapM_ (\entry -> hPutStrLn handle (show entry)) entries')
                                                         else inputError "The selected list does not exist."
 
 {-- Removes one or more entries from a list --}
@@ -209,13 +208,13 @@ remove (opts,remaining) = do --putStrLn "Removing an entry."
                              (header,entries) <- getHeaderAndEntries chosenList
                              putStrLn "Showing list:"
                              let maxDigits = length $ show $ length entries
-                             sequence_ $ zipWith (>>) (map (\num -> (putStr `withColor` Cyan) ((padFrontUntilLength ' ' maxDigits (show num)) ++ " ")) [1,2..]) (map putStrLn entries)
+                             sequence_ $ zipWith (>>) (map (\num -> (putStr `withColor` Cyan) ((padFrontUntilLength ' ' maxDigits (show num)) ++ " ")) [1,2..]) (map (putStrLn . show) entries)
                              putStrLn "End of shown list."
                              let arr = listArray (1, length entries) (zip (repeat False) entries)
                                  (removed',kept') = partition (\(rm, _) -> rm) (elems (foldl removePositionFromList arr positions))
                                  (removed, kept) = ((snd $ unzip removed'), (snd $ unzip kept'))
-                             sequence_ $ zipWith (>>) (map (\x -> putStr "Removing: ") [1,2..]) (map (\r -> (putStrLn `withColor` Red) r) removed)
-                             writeFile chosenList $ unlines $ header ++ kept
+                             sequence_ $ zipWith (>>) (map (\x -> putStr "Removing: ") [1,2..]) (map (\r -> (putStrLn `withColor` Red) (show r)) removed)
+                             writeFile chosenList $ unlines $ header ++ (map show kept)
                              present (opts,remaining)
 {-- Creates a new list --}
 

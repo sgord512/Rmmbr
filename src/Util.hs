@@ -7,6 +7,7 @@ module Util where
 
 import Control.Monad
 import Data.Array
+import Data.Either( partitionEithers )
 import Data.List( isSuffixOf )
 import Data.Maybe( fromJust )
 import Data.Time
@@ -16,6 +17,7 @@ import System.Console.GetOpt
 import System.Directory
 import System.IO
 import System.Locale
+import Text.Parsec
 import Text.Parsec.Prim
 import Text.Parsec.Char
 import Text.Parsec.Combinator
@@ -23,7 +25,7 @@ import Text.Parsec.String
 
 appName = "rmmbr"
 dateTimeString = "%m/%d/%Y (%R %P)"
-decoLength = 30 
+decoLength = 30
 decoChar = '*'
 defaultSort = "def"
 defaultListFile = "todo.txt"
@@ -41,7 +43,7 @@ throwUserError str = (\opts -> ioError $ userError $ "Couldn't parse the followi
 doNonOptsHandling :: String -> OptionTransformer
 doNonOptsHandling str opts = do (nonOptsHandler opts) str opts
 
-{-- DataTypes --} 
+{-- DataTypes --}
 
 data Options = Options { nonOptsHandler :: String -> OptionTransformer,
                          showVerbose :: Bool,
@@ -51,7 +53,7 @@ data Options = Options { nonOptsHandler :: String -> OptionTransformer,
                          position :: Either Position [Position],
                          theShowList :: Either String [String],
                          theList :: String,
-                         entries :: [String],
+                         entries :: [Entry],
                          importance :: String,
                          confirm :: String,
                          sort :: String }
@@ -67,9 +69,9 @@ prompt = do putStr "Do you want to proceed (y / n)? "
             hFlush stdout
             response <- getChar
             case response of
-                 'y' -> do putStrLn "Clearing all lists." 
+                 'y' -> do putStrLn "Clearing all lists."
                            return True
-                 'n' -> do putStrLn "Ending program." 
+                 'n' -> do putStrLn "Ending program."
                            return False
                  otherwise -> do putStrLn "Invalid response. Please try again."
                                  answer <- prompt
@@ -94,20 +96,24 @@ getDirAndLists = do appDir <- getAppUserDataDirectory appName
 
 {-- Takes a list and returns a tuple of the header and entries, in lines --}
 
-getHeaderAndEntries :: FilePath -> IO ([String],[String])
+getHeaderAndEntries :: FilePath -> IO ([String],[Entry])
 getHeaderAndEntries file = do (appDir, _) <- getDirAndLists
                               setCurrentDirectory appDir
                               handle <- openFile file ReadMode
                               header <- replicateM headerLength $ hGetLine handle
-                              entries <- getEntries' handle
+                              entriesParse <- getEntries' file handle                              
                               hClose handle
-                              return (header, entries)                         
+                              entries <- case partitionEithers entriesParse of
+                                   (_, vals) -> return vals
+                                   (errs, _) -> inputError $ unlines $ map show errs
+                              return (header, entries)
 
-getEntries' :: Handle -> IO [String]
-getEntries' handle = do eof <- hIsEOF handle
-                        if eof then return [] else do entry <- hGetLine handle
-                                                      entries <- getEntries' handle
-                                                      return (entry:entries)
+getEntries' :: FilePath -> Handle -> IO [Either ParseError Entry]
+getEntries' file handle = do eof <- hIsEOF handle
+                             if eof then return [] else do entryLine <- hGetLine handle
+                                                           let e = parse entry file entryLine
+                                                           entries <- getEntries' file handle
+                                                           return (e:entries)
 
 
 {-- Takes the arguments and the list of options and returns the processed options structure and the unrecognized arguments --}
@@ -139,7 +145,7 @@ defaultOptions = Options { nonOptsHandler = throwUserError,
 createList :: FilePath -> IO ()
 createList newList = do handle <- openFile newList WriteMode
                         currentTime <- getCurrentTime
-                        hPutStrLn handle $ (replicate decoLength decoChar) ++ " " ++ newList ++ " " ++ (replicate decoLength decoChar) 
+                        hPutStrLn handle $ (replicate decoLength decoChar) ++ " " ++ newList ++ " " ++ (replicate decoLength decoChar)
                         hPutStrLn handle $ formatTime defaultTimeLocale "Created on %D at: %X" currentTime
                         hClose handle
 
@@ -152,16 +158,16 @@ withColor output color = (\a -> setSGR [SetColor Foreground Vivid color] >> outp
 
 positionArg :: Parser Position
 positionArg = do{ char 'f'
-                ; optional $ string "irst" 
+                ; optional $ string "irst"
                 ; return First
                 }
-              <|> 
-              do{ char 'l' 
-                ; optional $ string "ast" 
+              <|>
+              do{ char 'l'
+                ; optional $ string "ast"
                 ; return Last
                 }
               <|> paren
-              <|> 
+              <|>
               do{ values <- numOrRange
                 ; case values of
                        Left val -> return (Index val)
@@ -176,7 +182,7 @@ paren = do{ char '('
           ; case values of
                  Left val -> return (RIndex val)
                  Right (fst, snd) -> return (RRange fst snd) }
-            
+
 {-- parses a number or span, and returns a single number or a duple in an Either --}
 
 numOrRange :: Parser (Either Int (Int, Int))
@@ -190,14 +196,14 @@ numOrRange = do{ start <- many1 digit
 
 {-- This takes a position, decomposes it, and marks it or throws errors appropriately --}
 
-removePositionFromList :: Array Int (Bool, String) -> Position -> Array Int (Bool, String)
-removePositionFromList arr pos = let end = (snd (bounds arr)) in 
-                                 case pos of 
+removePositionFromList :: Array Int (Bool, a) -> Position -> Array Int (Bool, a)
+removePositionFromList arr pos = let end = (snd (bounds arr)) in
+                                 case pos of
                                       First -> markEntryOrThrowError 1 arr
                                       Last -> markEntryOrThrowError end arr
                                       Index i -> markEntryOrThrowError i arr
                                       RIndex i -> markEntryOrThrowError (end - i) arr
-                                      Range fst snd -> if fst > snd then error "The beginning of an interval must be smaller than the end" 
+                                      Range fst snd -> if fst > snd then error "The beginning of an interval must be smaller than the end"
                                                                     else foldl (\a i -> markEntryOrThrowError i a) arr [fst..snd]
                                       RRange fst snd -> if fst > snd then error "The beginning of an interval must be smaller than the end"
                                                                      else foldl (\a i -> markEntryOrThrowError i a) arr [(end - snd)..(end - fst)]
@@ -205,7 +211,7 @@ removePositionFromList arr pos = let end = (snd (bounds arr)) in
 
 {-- It marks a position in the array as slated for removal or throws an error --}
 
-markEntryOrThrowError :: Int -> Array Int (Bool, String) -> Array Int (Bool, String)
+markEntryOrThrowError :: Int -> Array Int (Bool, a) -> Array Int (Bool, a)
 markEntryOrThrowError i arr = if i `notElem` (indices arr) then error "Invalid position entered"
                                                            else case (arr ! i) of
                                                                      (True, _) -> error "The same position marked twice. Aborting"
@@ -218,20 +224,21 @@ inputError msg = ioError $ userError msg
 
 {-- The definition of Entry data --}
 
-data Entry = Entry UTCTime Title CompletionStatus Importance Comment 
-     deriving (Show)
-type Title = String
-type Comment = String 
+data Entry = Entry AddTime Title CompletionStatus Importance Comment
+
+newtype Title = MakeTitle String
+newtype Comment = MakeComment String
+data AddTime = MakeAddTime UTCTime
 
 data Importance = Low | Medium | High
-     deriving (Eq, Ord, Show, Read, Bounded, Enum)
+     deriving (Eq, Ord, Bounded, Enum)
 
 data CompletionStatus = NotStarted | InProgress | Complete
-     deriving (Eq, Ord, Show, Read, Bounded, Enum)
+     deriving (Eq, Ord, Bounded, Enum)
 
 {-- Parser for entries --}
 
-entry :: Parser Entry 
+entry :: Parser Entry
 entry = do{ utcString <- (liftM unwords) ((many1 $ try $ noneOf [' ','-']) `endBy1` (char ' '))
           ; char '-' >> space
           ; importance <- importanceParser
@@ -241,13 +248,12 @@ entry = do{ utcString <- (liftM unwords) ((many1 $ try $ noneOf [' ','-']) `endB
           ; title <- manyTill anyChar (char ':')
           ; space
           ; comment <- manyTill anyChar eof
-          ; return (Entry (readTime defaultTimeLocale dateTimeString utcString)
-                          title
+          ; return (Entry (MakeAddTime (readTime defaultTimeLocale dateTimeString utcString))
+                          (MakeTitle title)
                           completionStatus
                           importance
-                          comment)
+                          (MakeComment comment))
           }
-
 
 compStatusParser :: Parser CompletionStatus
 compStatusParser = liftM (rLookupSafe compStatusCharMap) (oneOf $ map (\(_, c) -> c) compStatusCharMap)
@@ -270,3 +276,68 @@ importanceCharMap = [(High, 'H')
 
 rLookupSafe :: [(a, Char)] -> Char -> a
 rLookupSafe assocList = fromJust . ((flip lookup) (map swap assocList))
+
+instance Show Entry where
+         show (Entry addTime title compStatus importance comment) = show addTime ++
+                                                                    " - " ++
+                                                                    show importance ++
+                                                                    " " ++
+                                                                    show compStatus ++
+                                                                    " - " ++
+                                                                    show title ++
+                                                                    ": " ++
+                                                                    show comment
+
+instance Show Importance where
+         show i = [fromJust $ lookup i importanceCharMap]
+
+instance Show CompletionStatus where
+         show c = '[':(fromJust $ lookup c compStatusCharMap):']':[]
+
+instance Show AddTime where
+         show (MakeAddTime addTime) = formatTime defaultTimeLocale dateTimeString addTime
+
+instance Show Title where
+         show (MakeTitle t) = t
+
+instance Show Comment where
+         show (MakeComment c) = c
+
+class CP a where
+      colorPrint :: a -> IO ()
+
+instance CP Entry where
+         colorPrint (Entry addTime title compStatus importance comment) = sequence_  [colorPrint addTime
+                                                                                     ,putStr " - "
+                                                                                     ,colorPrint importance
+                                                                                     ,putStr " "
+                                                                                     ,colorPrint compStatus
+                                                                                     ,putStr " - "
+                                                                                     ,colorPrint title
+                                                                                     ,putStr ": "
+                                                                                     ,colorPrint comment
+                                                                                     ,putStrLn ""
+                                                                                     ]
+
+instance CP AddTime where
+         colorPrint = putStr . show
+
+instance CP Importance where
+         colorPrint i = do let color = case i of
+                                            High -> Red
+                                            Medium -> Yellow
+                                            Low -> White
+                           (putChar `withColor` color) (fromJust $ lookup i importanceCharMap)
+
+instance CP CompletionStatus where
+         colorPrint = putStr . show
+
+instance CP Title where
+         colorPrint (MakeTitle t) = putStr t
+
+instance CP Comment where
+         colorPrint (MakeComment c) = putStr c
+
+
+
+
