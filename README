@@ -4,21 +4,12 @@ Also, I am having a weird issue where ghc generates a stupendously long list of 
 
 ------------------------------------------------------------------------------------------------------------------------
 
-Then I should add priority, and deadlines, and maybe comments, either on the list itself or on the entries.
-
 Features that I want to implement:
 
 Interactive removal, with different colors, and the ability to enter ranges or from the end again. 
 	    I can probably repurpose my parser for that, and then just do some color stuff, shouldn't be that hard.
 
 Having meaningful sort order, so that you can sort by different criteria, and then do operations on the lists just as you would normally.
-This means reading the entries in, in a meaningful way, which might be difficult, but then sorting them shouldn't be that hard.
-
-ALSO: Remember to jazz up the title, at least when you display it, even if it isn't saved that way.
-
-I should also add priorities, so that things can be low, medium, or high priority, and they can be sorted that way, and displayed accordingly. THIS IS DONE ON THE PARSING SIDE, NO INTERFACE YET.
-
-Also, I should add some commenting system, because then I can provide enough info to actually be meaningful. THIS IS DONE ON THE PARSING SIDE, NO INTERFACE YET.
 
 Deadlines would be nice, but they are not essential from my point of view. (Maybe add this later)
 
@@ -32,21 +23,21 @@ Also, I should figure out a way to test all of this junk.
 
 Right now, I can do it manually, but it is about reaching the end of that phase.
 
-
 TODOS:
-
-First, get it so that an Entry is created when adding, and then some "toString"-like method prints it out.
 
 Then, fit those into lists. 
 
+Ok, so how do I want to deal with adding entries and specifying importance and comments.
 
+I guess I should first implement a "comment and comment-list"
 
+To do that I should do some refactoring so that I don't have to manually deal with validating lists all the time. This should make some other stuff easier as well. DONE
 
-I should 
+Also, I should refactor the removeElementFromList thing so that less of that logic is contained in the command and so that I can just specify behavior there, and not have to deal with the specifics so much. DONE
 
+Commenting now works, and you can begin and complete things. DONE
 
-
-
+Next up, implement some different sort orders, and then implement verbosity. 
 
 ****************************************************************************************************
 

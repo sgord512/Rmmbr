@@ -145,9 +145,17 @@ instance CP Title where
 instance CP Comment where
          colorPrint (MakeComment c) = putStr c
 
+{-- Creates a new entry with a different comment --}
 
+overwriteComment :: String -> Entry -> Entry 
+overwriteComment str (Entry addTime title compStatus importance _) = (Entry addTime title compStatus importance (MakeComment str)) 
 
+{-- Creates a new entry with a comment appended to the comment of the provided entry --} 
 
+appendComment :: String -> Entry -> Entry
+appendComment str (Entry addTime title compStatus importance (MakeComment com)) = (Entry addTime title compStatus importance (MakeComment (com ++ "; " ++  str)))
 
+{-- Creates a new entry with a new completion status --}
 
-
+changeCompStatus :: CompletionStatus -> Entry -> Entry
+changeCompStatus compStatus (Entry addTime title _ importance comment) = (Entry addTime title compStatus importance comment)

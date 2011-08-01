@@ -35,18 +35,25 @@ versionLog = [Version [0,3] ["fixed io"]
              ,Version [1,1] ["THE ACTUAL FIRST RELEASE", "REMOVE WORKS LIKE MAGIC"]
              ,Version [1,2] ["importance, completion, comment", "more formatting"]
              ,Version [1,3] ["integrated advanced entries", "refactoring and documentation"]
+             ,Version [1,4] ["comments can now be controlled via the command line", "entries can now be controlled via the command line"]
              ]
-
+             
 appNamePretty = "Rmmbr"
 
 
 commands :: [(String, ((Options, [String]) -> IO (), [OptDescr OptionTransformer], OptionTransformer, String))]
 commands = [ ("show", (present, presentOptions, assumeLists, "view the contents of your todo lists"))
-           , ("add", (add, addOptions, (\opts -> return opts { nonOptsHandler = doEntry }), "add an entry to one of your todo lists"))
-           , ("remove", (remove, removeOptions, (\opts -> return opts { nonOptsHandler = doPosition }), "remove an entry from one of your todo lists"))
-           , ("create", (create, createOptions, assumeSelectList, "create a new todo list"))
+           , ("add", (add, addOptions, (\opts -> return opts { nonOptsHandler = doEntries }), "add an entry to one of your todo lists"))
+           , ("remove", (remove, removeOptions, (\opts -> return opts { nonOptsHandler = doPositions }), "remove an entry from one of your todo lists"))
+           , ("create", (create, createOptions, (\opts -> return opts { nonOptsHandler = doCreateList }), "create a new todo list"))
            , ("help", (help, helpOptions, (\opts -> return opts { nonOptsHandler = doHelpForCommand }), "show this help information"))
            , ("reset", (reset, resetOptions, return, "clear all your todo lists, and start over with no entries"))
+           , ("comment", (commentEntry, commentOptions, (\opts -> return opts { nonOptsHandler = doComment }), "set the comment for an entry, or append a comment to an entry"))
+           , ("comment-list", (comment_list, commentListOptions, (\opts -> return opts { nonOptsHandler = doComment }), "set the comment for a list, or append a comment to a list"))  
+           , ("done", (complete_entry Complete, completeEntryOptions, (\opts -> return opts {nonOptsHandler = doPositions }), "check an entry off your list as complete"))
+           , ("begin", (complete_entry InProgress, completeEntryOptions, (\opts -> return opts { nonOptsHandler = doPositions }), "mark an entry as in progress"))
+--           , ("cleanup", (cleanup, cleanupOptions, return, "take completed items off a list"))
+--           , ("edit", (edit, editOptions, return, "interactively edit your lists"))
            ]
 
 assumeLists :: OptionTransformer
@@ -81,28 +88,44 @@ doOverwrite opts = return opts { overwrite = True }
 doRemoveList :: String -> OptionTransformer
 doRemoveList removeName opts = return opts { theList = removeName ++ ".txt" }
 
-doEntry :: String -> OptionTransformer
-doEntry title opts = do utcTime <- getCurrentTime
-                        let entry = (Entry (MakeAddTime utcTime) (MakeTitle title) NotStarted Medium (MakeComment "(default comment)"))
-                        return opts { entries = entry:(entries opts) }
+doEntries :: String -> OptionTransformer
+doEntries title opts = do utcTime <- getCurrentTime
+                          let entry = (Entry (MakeAddTime utcTime) (MakeTitle title) NotStarted Medium (MakeComment "(default comment)"))
+                          return opts { entries = entry:(entries opts) }
+
+doComment :: String -> OptionTransformer
+doComment str opts = return opts { comment = str, nonOptsHandler = throwUserError }
+
+doPositions :: String -> OptionTransformer
+doPositions str opts = case (parse positionArg "position arguments" str) of
+                       Left err -> inputError $ show err
+                       Right pos -> return opts { position = case position opts of
+                                                                  Left _ -> Right [pos]
+                                                                  Right ps -> Right (pos:ps) }
 
 doPosition :: String -> OptionTransformer
-doPosition str opts = case (parse positionArg "position arguments" str) of
-                      Left err -> inputError $ show err
-                      Right pos -> return opts { position = case position opts of
-                                                                 Left _ -> Right [pos]
-                                                                 Right ps -> Right (pos:ps) }
+doPosition str opts = case (parse positionArg "postions argument" str) of
+                       Left err -> inputError $ show err
+                       Right pos -> return opts { position = Left pos }
+                                                                  
 
 doSelectList :: String -> OptionTransformer
-doSelectList list opts = return opts { theList = list ++ ".txt", nonOptsHandler = doEntry }
+doSelectList list opts = do (appDir, allLists) <- getDirAndLists
+                            validateList list allLists
+                            return opts { theList = list ++ ".txt", nonOptsHandler = doEntries }
+
+doCreateList :: String -> OptionTransformer
+doCreateList list opts = return opts { theList = list ++ ".txt", nonOptsHandler = throwUserError }
 
 doImportance :: String -> OptionTransformer
 doImportance level opts = return opts { importance = level }
 
 doShowList :: String -> OptionTransformer
-doShowList list opts = return opts { theShowList = case theShowList opts of
-                                                        Left _ -> Right [list ++ ".txt"]
-                                                        Right lists -> Right ((list ++ ".txt"):lists) }
+doShowList list opts = do (appDir, allLists) <- getDirAndLists
+                          validateList list allLists
+                          return opts { theShowList = case theShowList opts of
+                                                           Left _ -> Right [list ++ ".txt"]
+                                                           Right lists -> Right ((list ++ ".txt"):lists) }
 
 --doSort :: String -> OptionTransformer
 --doSort sortBy opts = return opts { sort = sortBy }
@@ -124,9 +147,10 @@ selectListOption = Option ['l'] ["list"] (ReqArg doSelectList "LIST") "select a 
 showListOption = Option ['l'] ["list"] (ReqArg doShowList "LIST") "specify which lists to display"
 --sortOrderOption = Option ['s'] ["sort"] (ReqArg doSort "SORT ORDER") "specify an order for entries to be sorted in when they are presented"
 overwriteOption = Option ['o'] ["overwrite"] (NoArg doOverwrite) "overwrite an already existing list with a new empty list"
-positionOption = Option ['p'] ["position"] (ReqArg doPosition "POSITION") "specify an entry by its position in the selected list"
+positionsOption = Option ['p'] ["position"] (ReqArg doPositions "POSITION") "specify an entry by its position in the selected list"
 --interactiveRemoveOption = Option ['i'] ["interactive"] (NoArg doInteractiveRemove) "interactively remove entries from a list"
 allListsOption = Option ['a'] ["all"] (NoArg doAllLists) "show all lists"
+positionOption = Option ['p'] ["position"] (ReqArg doPosition "POSITION") "specify an entry by its position in the selected list"
 
 
 {-- the main function --}
@@ -161,14 +185,13 @@ present (opts,remaining) = do --putStrLn "Showing all entries."
                                                             Left list -> return (list, opts { theShowList = Right [] })
                                                             Right list -> return ((last list), opts {theShowList = Right (init list)})
                               (appDir, allLists) <- getDirAndLists
-                              if chosenList `elem` allLists then do setCurrentDirectory appDir
-                                                                    (header, entries) <- getHeaderAndEntries chosenList
-                                                                    let sep = words (head header)
-                                                                        title = (putStr $ (head sep) ++ " "):((putStr `withColor` Yellow) $ sep !! 1):(putStrLn $ " " ++ (last sep)):(putStrLn (last header)):[]
-                                                                    sequence_ title
-                                                                    let maxDigits = length $ show $ length entries
-                                                                    sequence_ $ zipWith (>>) (map (\num -> (putStr `withColor` Magenta) ((padFrontUntilLength ' ' maxDigits (show num)) ++ " ")) [1,2..]) (map colorPrint entries)
-                                                            else inputError $ "The selected list does not exist: " ++ chosenList
+                              setCurrentDirectory appDir
+                              (header, entries) <- getHeaderAndEntries chosenList
+                              let sep = words (head header)
+                                  title = (putStr $ (head sep) ++ " "):((putStr `withColor` Yellow) $ sep !! 1):(putStrLn $ " " ++ (last sep)):(putStrLn (last header)):[]
+                              sequence_ title
+                              let maxDigits = length $ show $ length entries
+                              sequence_ $ zipWith (>>) (map (\num -> (putStr `withColor` Magenta) ((padFrontUntilLength ' ' maxDigits (show num)) ++ " ")) [1,2..]) (map colorPrint entries)
                               unless (theShowList newOpts == Right []) $ present (newOpts, remaining)
 
 
@@ -185,16 +208,15 @@ add (opts,remaining) = do --putStrLn "Adding an entry."
                               entries' = reverse $ entries opts
                           (appDir, allLists) <- getDirAndLists
                           currentTime <- getCurrentTime
-                          if chosenList `elem` allLists then do setCurrentDirectory appDir
-                                                                withFile chosenList AppendMode (\handle -> mapM_ (\entry -> hPutStrLn handle (show entry)) entries')
-                                                        else inputError "The selected list does not exist."
+                          setCurrentDirectory appDir
+                          withFile chosenList AppendMode (\handle -> mapM_ (\entry -> hPutStrLn handle (show entry)) entries')                           
 
 {-- Removes one or more entries from a list --}
 
 removeOptions :: [OptDescr OptionTransformer]
 removeOptions = [commandHelpOption removeOptions
                 ,selectListOption
-                ,positionOption
+                ,positionsOption
                 ]
 
 remove :: (Options, [String]) -> IO ()
@@ -204,7 +226,6 @@ remove (opts,remaining) = do --putStrLn "Removing an entry."
                                                   Left pos -> [pos]
                                                   Right ps -> ps
                              (appDir, allLists) <- getDirAndLists
-                             unless (chosenList `elem` allLists) $ inputError "The selected list does not exist."
                              (header,entries) <- getHeaderAndEntries chosenList
                              putStrLn "Showing list:"
                              let maxDigits = length $ show $ length entries
@@ -257,7 +278,7 @@ help (opts,_) = do --putStrLn "Displaying help for the program."
 resetOptions :: [OptDescr OptionTransformer]
 resetOptions = [commandHelpOption resetOptions
                ,overwriteOption
-                              ]
+               ]
 
 reset :: (Options, [String]) -> IO ()
 reset (opts,_) = do --putStrLn "Clearing all lists."
@@ -273,4 +294,58 @@ reset (opts,_) = do --putStrLn "Clearing all lists."
                                                            createList defaultListFile
                                                            return ()
 
+{-- Add a comment to an entry, or change the current comment --}
 
+commentOptions :: [OptDescr OptionTransformer]
+commentOptions = [commandHelpOption commentOptions
+                 ,overwriteOption
+                 ,selectListOption
+                 ,positionOption
+                 ]
+
+commentEntry :: (Options, [String]) -> IO ()
+commentEntry (opts,_) = do --putStrLn "Adding comment to entry"
+                           let chosenList = theList opts
+                               (Left pos) = position opts
+                               cmt = comment opts
+                           (appDir, allLists) <- getDirAndLists
+                           (header, entries) <- getHeaderAndEntries chosenList
+                           let arr = listArray (1, length entries) entries
+                               action = (if overwrite opts then overwriteComment else appendComment) cmt
+                               update = (\i a -> a//[(i, action (a!i))])
+                               entries' = elems $ applyToPosition pos update arr
+                           writeFile chosenList $ unlines $ header ++ (map show entries')
+                      
+{-- Add a comment to a list, or change the current comment --}
+ 
+commentListOptions :: [OptDescr OptionTransformer]
+commentListOptions = [commandHelpOption commentOptions
+                     ,overwriteOption
+                     ]
+
+
+comment_list :: (Options, [String]) -> IO ()
+comment_list (opts,_) = do --putStrLn "Adding comment to list"
+                           return ()
+
+
+{-- Change the completion status of entries --}
+
+completeEntryOptions :: [OptDescr OptionTransformer]
+completeEntryOptions = [commandHelpOption completeEntryOptions
+                       ,selectListOption
+                       ,positionsOption
+                       ]
+
+complete_entry :: CompletionStatus -> (Options, [String]) -> IO ()
+complete_entry comp (opts,_) = do --putStrLn "Changing the completion status of entries"
+                                  let chosenList = theList opts
+                                      positions = case position opts of
+                                                       Left pos -> [pos]
+                                                       Right pos -> pos
+                                  (appDir, allLists) <- getDirAndLists
+                                  (header, entries) <- getHeaderAndEntries chosenList
+                                  let arr = listArray (1, length entries) entries
+                                      update = (\i a -> a//[(i, (changeCompStatus comp) (a!i))])
+                                      entries' = elems $ foldl (\a p -> applyToPosition p update a) arr positions
+                                  writeFile chosenList $ unlines $ header ++ (map show entries')

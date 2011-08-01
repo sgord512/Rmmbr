@@ -31,6 +31,7 @@ defaultSort = "def"
 defaultListFile = "todo.txt"
 headerLength = 2
 usageHelpHeader = "Usage: rmmbr [OPTION...] "
+defaultComment = "(default comment)"
 
 
 {-- Defining OptionTransformer and the handler for invalid arguments --}
@@ -48,6 +49,7 @@ doNonOptsHandling str opts = do (nonOptsHandler opts) str opts
 data Options = Options { nonOptsHandler :: String -> OptionTransformer,
                          showVerbose :: Bool,
                          helpCmd :: Maybe String,
+                         comment :: String,
                          overwrite :: Bool,
 --                         interactive :: Bool,
                          position :: Either Position [Position],
@@ -74,6 +76,7 @@ defaultOptions :: Options
 defaultOptions = Options { nonOptsHandler = throwUserError,
                            showVerbose = False,
                            helpCmd = Nothing,
+                           comment = defaultComment,
                            overwrite = False,
 --                           interactive = False,
                            position = Left Last,
@@ -127,7 +130,7 @@ getHeaderAndEntries file = do (appDir, _) <- getDirAndLists
                               entriesParse <- getEntries' file handle                              
                               hClose handle
                               entries <- case partitionEithers entriesParse of
-                                   (_, vals) -> return vals
+                                   ([], vals) -> return vals
                                    (errs, _) -> inputError $ unlines $ map show errs
                               return (header, entries)
 
@@ -190,17 +193,7 @@ numOrRange = do{ start <- many1 digit
 {-- This takes a position, decomposes it, and marks it or throws errors appropriately --}
 
 removePositionFromList :: Array Int (Bool, a) -> Position -> Array Int (Bool, a)
-removePositionFromList arr pos = let end = (snd (bounds arr)) in
-                                 case pos of
-                                      First -> markEntryOrThrowError 1 arr
-                                      Last -> markEntryOrThrowError end arr
-                                      Index i -> markEntryOrThrowError i arr
-                                      RIndex i -> markEntryOrThrowError (end - i) arr
-                                      Range fst snd -> if fst > snd then error "The beginning of an interval must be smaller than the end"
-                                                                    else foldl (\a i -> markEntryOrThrowError i a) arr [fst..snd]
-                                      RRange fst snd -> if fst > snd then error "The beginning of an interval must be smaller than the end"
-                                                                     else foldl (\a i -> markEntryOrThrowError i a) arr [(end - snd)..(end - fst)]
-
+removePositionFromList arr pos = applyToPosition pos markEntryOrThrowError arr
 
 {-- It marks a position in the array as slated for removal or throws an error --}
 
@@ -214,4 +207,27 @@ markEntryOrThrowError i arr = if i `notElem` (indices arr) then error "Invalid p
 
 inputError :: String -> IO a
 inputError msg = ioError $ userError msg
+
+{-- Represents an interval that is backwards --}  
+
+badIntervalError = error "The beginning of an interval must be smaller than the end"
+
+{-- an abstraction that allows an action to be applied to a list of entries at a position --}
+
+applyToPosition :: Position -> (Int -> Array Int e -> Array Int e) -> Array Int e -> Array Int e
+applyToPosition First f arr = f 1 arr
+applyToPosition Last f arr = f (snd $ bounds arr) arr
+applyToPosition (Index i) f arr = f i arr
+applyToPosition (RIndex i) f arr = f ((snd $ bounds arr) - i) arr
+applyToPosition (Range s e) f arr = if s > e then badIntervalError
+                                             else foldl (flip f) arr [s..e]
+applyToPosition (RRange s e) f arr = if s > e then badIntervalError
+                                              else foldl (flip f) arr [((snd $ bounds arr) - s)..((snd $ bounds arr) - e)]
+
+{-- Does nothing if list is valid. error otherwise --}
+
+validateList :: String -> [String] -> IO ()
+validateList list lists = if list `elem` lists then return ()
+                                               else inputError $ "The selected list does not exist: " ++ list
+
 
