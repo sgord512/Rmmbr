@@ -36,6 +36,7 @@ versionLog = [Version [0,3] ["fixed io"]
              ,Version [1,2] ["importance, completion, comment", "more formatting"]
              ,Version [1,3] ["integrated advanced entries", "refactoring and documentation"]
              ,Version [1,4] ["comments can now be controlled via the command line", "entries can now be controlled via the command line"]
+             ,Version [1,5] ["sorting works", "cleanup implemented"]
              ]
              
 appNamePretty = "Rmmbr"
@@ -49,10 +50,10 @@ commands = [ ("show", (present, presentOptions, assumeLists, "view the contents 
            , ("help", (help, helpOptions, (\opts -> return opts { nonOptsHandler = doHelpForCommand }), "show this help information"))
            , ("reset", (reset, resetOptions, return, "clear all your todo lists, and start over with no entries"))
            , ("comment", (commentEntry, commentOptions, (\opts -> return opts { nonOptsHandler = doComment }), "set the comment for an entry, or append a comment to an entry"))
-           , ("comment-list", (comment_list, commentListOptions, (\opts -> return opts { nonOptsHandler = doComment }), "set the comment for a list, or append a comment to a list"))  
+--           , ("comment-list", (comment_list, commentListOptions, (\opts -> return opts { nonOptsHandler = doComment }), "set the comment for a list, or append a comment to a list"))  
            , ("done", (complete_entry Complete, completeEntryOptions, (\opts -> return opts {nonOptsHandler = doPositions }), "check an entry off your list as complete"))
            , ("begin", (complete_entry InProgress, completeEntryOptions, (\opts -> return opts { nonOptsHandler = doPositions }), "mark an entry as in progress"))
---           , ("cleanup", (cleanup, cleanupOptions, return, "take completed items off a list"))
+           , ("cleanup", (cleanup, cleanupOptions, return, "take completed items off a list"))
 --           , ("edit", (edit, editOptions, return, "interactively edit your lists"))
            ]
 
@@ -127,8 +128,13 @@ doShowList list opts = do (appDir, allLists) <- getDirAndLists
                                                            Left _ -> Right [list ++ ".txt"]
                                                            Right lists -> Right ((list ++ ".txt"):lists) }
 
---doSort :: String -> OptionTransformer
---doSort sortBy opts = return opts { sort = sortBy }
+
+
+
+doSort :: String -> OptionTransformer
+doSort sortBy opts = do case (parse sortArg "sorting method argument" sortBy) of
+                             Left err -> inputError $ show err
+                             Right sortFunction -> return opts { sort = sortFunction }
 
 --doInteractiveRemove :: OptionTransformer
 --doInteractiveRemove opts = return opts { interactive = True }
@@ -145,7 +151,7 @@ versionOption = Option ['V'] ["version"] (NoArg doVersion) "show detailed versio
 verboseOption desc = Option ['v'] ["verbose"] (NoArg doVerbose) desc
 selectListOption = Option ['l'] ["list"] (ReqArg doSelectList "LIST") "select a list to be the target of your command"
 showListOption = Option ['l'] ["list"] (ReqArg doShowList "LIST") "specify which lists to display"
---sortOrderOption = Option ['s'] ["sort"] (ReqArg doSort "SORT ORDER") "specify an order for entries to be sorted in when they are presented"
+sortOrderOption = Option ['s'] ["sort"] (ReqArg doSort "SORT ORDER") "specify an order for entries to be sorted in when they are presented"
 overwriteOption = Option ['o'] ["overwrite"] (NoArg doOverwrite) "overwrite an already existing list with a new empty list"
 positionsOption = Option ['p'] ["position"] (ReqArg doPositions "POSITION") "specify an entry by its position in the selected list"
 --interactiveRemoveOption = Option ['i'] ["interactive"] (NoArg doInteractiveRemove) "interactively remove entries from a list"
@@ -173,7 +179,7 @@ main = do --putStr $ appNamePretty ++ ": "
 presentOptions :: [OptDescr OptionTransformer]
 presentOptions = [showListOption
                  ,verboseOption "show more detailed version of selected lists"
---                 ,sortOrderOption
+                 ,sortOrderOption
                  ,commandHelpOption presentOptions
                  ,versionOption
                  ,allListsOption
@@ -186,7 +192,7 @@ present (opts,remaining) = do --putStrLn "Showing all entries."
                                                             Right list -> return ((last list), opts {theShowList = Right (init list)})
                               (appDir, allLists) <- getDirAndLists
                               setCurrentDirectory appDir
-                              (header, entries) <- getHeaderAndEntries chosenList
+                              (header, entries) <- getHeaderAndEntries chosenList (sort opts)
                               let sep = words (head header)
                                   title = (putStr $ (head sep) ++ " "):((putStr `withColor` Yellow) $ sep !! 1):(putStrLn $ " " ++ (last sep)):(putStrLn (last header)):[]
                               sequence_ title
@@ -217,6 +223,7 @@ removeOptions :: [OptDescr OptionTransformer]
 removeOptions = [commandHelpOption removeOptions
                 ,selectListOption
                 ,positionsOption
+                ,sortOrderOption
                 ]
 
 remove :: (Options, [String]) -> IO ()
@@ -226,7 +233,7 @@ remove (opts,remaining) = do --putStrLn "Removing an entry."
                                                   Left pos -> [pos]
                                                   Right ps -> ps
                              (appDir, allLists) <- getDirAndLists
-                             (header,entries) <- getHeaderAndEntries chosenList
+                             (header,entries) <- getHeaderAndEntries chosenList (sort opts)
                              putStrLn "Showing list:"
                              let maxDigits = length $ show $ length entries
                              sequence_ $ zipWith (>>) (map (\num -> (putStr `withColor` Cyan) ((padFrontUntilLength ' ' maxDigits (show num)) ++ " ")) [1,2..]) (map (putStrLn . show) entries)
@@ -243,6 +250,7 @@ createOptions :: [OptDescr OptionTransformer]
 createOptions = [commandHelpOption createOptions
                 ,selectListOption
                 ,overwriteOption
+                ,sortOrderOption
                 ]
 
 create :: (Options, [String]) -> IO ()
@@ -301,6 +309,7 @@ commentOptions = [commandHelpOption commentOptions
                  ,overwriteOption
                  ,selectListOption
                  ,positionOption
+                 ,sortOrderOption
                  ]
 
 commentEntry :: (Options, [String]) -> IO ()
@@ -309,7 +318,7 @@ commentEntry (opts,_) = do --putStrLn "Adding comment to entry"
                                (Left pos) = position opts
                                cmt = comment opts
                            (appDir, allLists) <- getDirAndLists
-                           (header, entries) <- getHeaderAndEntries chosenList
+                           (header, entries) <- getHeaderAndEntries chosenList (sort opts)
                            let arr = listArray (1, length entries) entries
                                action = (if overwrite opts then overwriteComment else appendComment) cmt
                                update = (\i a -> a//[(i, action (a!i))])
@@ -335,6 +344,7 @@ completeEntryOptions :: [OptDescr OptionTransformer]
 completeEntryOptions = [commandHelpOption completeEntryOptions
                        ,selectListOption
                        ,positionsOption
+                       ,sortOrderOption
                        ]
 
 complete_entry :: CompletionStatus -> (Options, [String]) -> IO ()
@@ -344,8 +354,21 @@ complete_entry comp (opts,_) = do --putStrLn "Changing the completion status of 
                                                        Left pos -> [pos]
                                                        Right pos -> pos
                                   (appDir, allLists) <- getDirAndLists
-                                  (header, entries) <- getHeaderAndEntries chosenList
+                                  (header, entries) <- getHeaderAndEntries chosenList (sort opts)
                                   let arr = listArray (1, length entries) entries
                                       update = (\i a -> a//[(i, (changeCompStatus comp) (a!i))])
                                       entries' = elems $ foldl (\a p -> applyToPosition p update a) arr positions
                                   writeFile chosenList $ unlines $ header ++ (map show entries')
+
+cleanupOptions :: [OptDescr OptionTransformer]
+cleanupOptions = [commandHelpOption cleanupOptions
+                 ,selectListOption
+                 ]
+
+cleanup :: (Options, [String]) -> IO ()
+cleanup (opts, _) = do --putStrLn "Removing all completed entries"
+                       let chosenList = theList opts
+                       (appDir, allLists) <- getDirAndLists
+                       (header, entries) <- getHeaderAndEntries chosenList (sort opts)
+                       let (removed', kept') = partition (\(Entry _ _ compStatus _ _) -> compStatus == Complete) entries
+                       writeFile chosenList $ unlines $ header ++ (map show kept')

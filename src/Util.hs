@@ -8,7 +8,7 @@ module Util where
 import Control.Monad
 import Data.Array
 import Data.Either( partitionEithers )
-import Data.List( isSuffixOf )
+import Data.List( isSuffixOf, sortBy )
 import Data.Maybe( fromJust )
 import Data.Time
 import System.Console.ANSI
@@ -27,7 +27,7 @@ import Entry
 appName = "rmmbr"
 decoLength = 30
 decoChar = '*'
-defaultSort = "def"
+defaultSort = "byDateTime"
 defaultListFile = "todo.txt"
 headerLength = 2
 usageHelpHeader = "Usage: rmmbr [OPTION...] "
@@ -58,7 +58,7 @@ data Options = Options { nonOptsHandler :: String -> OptionTransformer,
                          entries :: [Entry],
                          importance :: String,
                          confirm :: String,
-                         sort :: String }
+                         sort :: SortFunction }
 
 data Position = First | Last | Index Int | RIndex Int | Range Int Int | RRange Int Int
 
@@ -84,7 +84,7 @@ defaultOptions = Options { nonOptsHandler = throwUserError,
                            theList = defaultListFile,
                            entries = [],
                            importance = "",
-                           sort = "" }
+                           sort = fromJust $ lookup defaultSort sortOrders }
 
 {-- Helper Functions --}
 
@@ -122,17 +122,17 @@ getDirAndLists = do appDir <- getAppUserDataDirectory appName
 
 {-- Takes a list and returns a tuple of the header and entries, in lines --}
 
-getHeaderAndEntries :: FilePath -> IO ([String],[Entry])
-getHeaderAndEntries file = do (appDir, _) <- getDirAndLists
-                              setCurrentDirectory appDir
-                              handle <- openFile file ReadMode
-                              header <- replicateM headerLength $ hGetLine handle
-                              entriesParse <- getEntries' file handle                              
-                              hClose handle
-                              entries <- case partitionEithers entriesParse of
-                                   ([], vals) -> return vals
-                                   (errs, _) -> inputError $ unlines $ map show errs
-                              return (header, entries)
+getHeaderAndEntries :: FilePath -> SortFunction -> IO ([String],[Entry])
+getHeaderAndEntries file sf = do (appDir, _) <- getDirAndLists
+                                 setCurrentDirectory appDir
+                                 handle <- openFile file ReadMode
+                                 header <- replicateM headerLength $ hGetLine handle
+                                 entriesParse <- getEntries' file handle                              
+                                 hClose handle
+                                 entries <- case partitionEithers entriesParse of
+                                                ([], vals) -> return vals
+                                                (errs, _) -> inputError $ unlines $ map show errs                                 
+                                 return (header, sortBy sf entries)
 
 getEntries' :: FilePath -> Handle -> IO [Either ParseError Entry]
 getEntries' file handle = do eof <- hIsEOF handle
