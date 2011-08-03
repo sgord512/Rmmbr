@@ -6,6 +6,7 @@
 module Main where
 
 import Control.Monad
+import Control.Monad.Trans.Class
 import Data.Array
 import Data.List( isSuffixOf, partition, unzip4, zipWith4 )
 import Data.Maybe( fromMaybe, isNothing )
@@ -13,16 +14,19 @@ import Data.Time
 import Data.Version
 import System.Console.ANSI
 import System.Console.GetOpt
+import System.Console.Haskeline
 import System.Directory
 import System.Environment
 import System.Exit
 import System.IO
 import System.Locale
 import Text.Parsec.Prim
+import UI.HSCurses.Curses
+import UI.HSCurses.CursesHelper
 
-import Toolbox( inTwoColumns, padFrontUntilLength, withColor )
-import Util
-import Entry
+import Base.Toolbox( inTwoColumns, padFrontUntilLength, withColor )
+import Base.Util
+import Base.Entry
 
 versionLog = [Version [0,3] ["fixed io"]
              ,Version [0,4] ["almost stable"]
@@ -54,7 +58,7 @@ commands = [ ("show", (present, presentOptions, assumeLists, "view the contents 
            , ("done", (complete_entry Complete, completeEntryOptions, (\opts -> return opts {nonOptsHandler = doPositions }), "check an entry off your list as complete"))
            , ("begin", (complete_entry InProgress, completeEntryOptions, (\opts -> return opts { nonOptsHandler = doPositions }), "mark an entry as in progress"))
            , ("cleanup", (cleanup, cleanupOptions, return, "take completed items off a list"))
---           , ("edit", (edit, editOptions, return, "interactively edit your lists"))
+           , ("edit", (edit, editOptions, return, "interactively edit your lists"))
            ]
 
 assumeLists :: OptionTransformer
@@ -72,8 +76,9 @@ doVersion opts = do putStrLn $ unlines $ map showVersion versionLog
                     return opts
 
 doVerbose :: OptionTransformer
-doVerbose opts = do putStrLn "doVerbose"
-                    return opts { showVerbose = True }
+doVerbose opts = do putStrLn "Verbose mode enabled."
+                    putStr $ appNamePretty ++ ": "
+                    return opts { verbose = True }
 
 doCmdHelp :: [OptDescr OptionTransformer] -> OptionTransformer
 doCmdHelp cmdOpts opts = do putStrLn $ usageInfo usageHelpHeader cmdOpts
@@ -161,8 +166,7 @@ positionOption = Option ['p'] ["position"] (ReqArg doPosition "POSITION") "speci
 
 {-- the main function --}
 
-main = do --putStr $ appNamePretty ++ ": "
-          (appDir, _) <- getDirAndLists
+main = do (appDir, _) <- getDirAndLists
           alreadyConfigured <- doesDirectoryExist appDir
           unless alreadyConfigured $ configure
           input <- getArgs
@@ -186,7 +190,7 @@ presentOptions = [showListOption
                  ]
 
 present :: (Options, [String]) -> IO ()
-present (opts,remaining) = do --putStrLn "Showing all entries."
+present (opts,remaining) = do when (verbose opts) $ putStrLn "Showing all entries."
                               (chosenList, newOpts) <- case theShowList opts of
                                                             Left list -> return (list, opts { theShowList = Right [] })
                                                             Right list -> return ((last list), opts {theShowList = Right (init list)})
@@ -209,7 +213,7 @@ addOptions = [commandHelpOption addOptions
              ]
 
 add :: (Options, [String]) -> IO ()
-add (opts,remaining) = do --putStrLn "Adding an entry."
+add (opts,remaining) = do when (verbose opts) $ putStrLn "Adding an entry."
                           let chosenList = theList opts
                               entries' = reverse $ entries opts
                           (appDir, allLists) <- getDirAndLists
@@ -227,7 +231,7 @@ removeOptions = [commandHelpOption removeOptions
                 ]
 
 remove :: (Options, [String]) -> IO ()
-remove (opts,remaining) = do --putStrLn "Removing an entry."
+remove (opts,remaining) = do when (verbose opts) $ putStrLn "Removing an entry."
                              let chosenList = theList opts
                                  positions = case position opts of
                                                   Left pos -> [pos]
@@ -254,7 +258,7 @@ createOptions = [commandHelpOption createOptions
                 ]
 
 create :: (Options, [String]) -> IO ()
-create (opts,remaining) = do --putStrLn "Creating a new list of entries."
+create (opts,remaining) = do when (verbose opts) $ putStrLn "Creating a new list of entries."
                              let newList = theList opts
                              (appDir, allLists) <- getDirAndLists
                              if (newList `notElem` allLists) || (overwrite opts) then do setCurrentDirectory appDir
@@ -269,7 +273,7 @@ helpOptions = [commandHelpOption helpOptions
               ]
 
 help :: (Options, [String]) -> IO ()
-help (opts,_) = do --putStrLn "Displaying help for the program."
+help (opts,_) = do when (verbose opts) $ putStrLn "Displaying help for the program."
                    case helpCmd opts of 
                         Nothing -> do let (cmd, cmdData) = unzip commands
                                           (_, _, _, helpText) = unzip4 cmdData
@@ -289,7 +293,7 @@ resetOptions = [commandHelpOption resetOptions
                ]
 
 reset :: (Options, [String]) -> IO ()
-reset (opts,_) = do --putStrLn "Clearing all lists."
+reset (opts,_) = do when (verbose opts) $ putStrLn "Clearing all lists."
                     let confirm = overwrite opts
                     if confirm then do (_, allLists) <- getDirAndLists
                                        mapM_ removeFile allLists
@@ -313,7 +317,7 @@ commentOptions = [commandHelpOption commentOptions
                  ]
 
 commentEntry :: (Options, [String]) -> IO ()
-commentEntry (opts,_) = do --putStrLn "Adding comment to entry"
+commentEntry (opts,_) = do when (verbose opts) $ putStrLn "Adding comment to entry"
                            let chosenList = theList opts
                                (Left pos) = position opts
                                cmt = comment opts
@@ -334,7 +338,7 @@ commentListOptions = [commandHelpOption commentOptions
 
 
 comment_list :: (Options, [String]) -> IO ()
-comment_list (opts,_) = do --putStrLn "Adding comment to list"
+comment_list (opts,_) = do when (verbose opts) $ putStrLn "Adding comment to list"
                            return ()
 
 
@@ -348,7 +352,7 @@ completeEntryOptions = [commandHelpOption completeEntryOptions
                        ]
 
 complete_entry :: CompletionStatus -> (Options, [String]) -> IO ()
-complete_entry comp (opts,_) = do --putStrLn "Changing the completion status of entries"
+complete_entry comp (opts,_) = do when (verbose opts) $ putStrLn "Changing the completion status of entries"
                                   let chosenList = theList opts
                                       positions = case position opts of
                                                        Left pos -> [pos]
@@ -366,9 +370,34 @@ cleanupOptions = [commandHelpOption cleanupOptions
                  ]
 
 cleanup :: (Options, [String]) -> IO ()
-cleanup (opts, _) = do --putStrLn "Removing all completed entries"
+cleanup (opts, _) = do when (verbose opts) $ putStrLn "Removing all completed entries"
                        let chosenList = theList opts
-                       (appDir, allLists) <- getDirAndLists
                        (header, entries) <- getHeaderAndEntries chosenList (sort opts)
                        let (removed', kept') = partition (\(Entry _ _ compStatus _ _) -> compStatus == Complete) entries
                        writeFile chosenList $ unlines $ header ++ (map show kept')
+
+
+editOptions :: [OptDescr OptionTransformer]
+editOptions = [commandHelpOption editOptions
+              ,selectListOption
+              ,sortOrderOption
+              ]
+
+edit :: (Options, [String]) -> IO ()
+edit (opts, _) = do when (verbose opts) $ putStrLn "Editing a list"
+                    let chosenList = theList opts
+                    (header, entries) <- getHeaderAndEntries chosenList (sort opts)
+                    let maxDigits = length $ show $ length entries
+                    sequence_ $ zipWith (>>) (map (\num -> (putStr `withColor` Red) ((padFrontUntilLength ' ' maxDigits (show num) ++ " "))) [1,2..]) (map colorPrint entries)
+                    putStrLn "Editing is not currently enabled. Coming soon though..."
+--                    start >> runInputT defaultSettings editLoop >> end
+
+{--
+editLoop :: InputT IO ()
+editLoop = do input <- lift getCh
+              case input of
+                   KeyUp -> lift $ (cursorUpLine 1 >> refresh)
+                   KeyDown -> lift $ (cursorDownLine 1 >> refresh)
+                   otherwise -> lift end
+              editLoop
+--}

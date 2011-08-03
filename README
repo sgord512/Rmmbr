@@ -33,11 +33,18 @@ I guess I should first implement a "comment and comment-list"
 
 To do that I should do some refactoring so that I don't have to manually deal with validating lists all the time. This should make some other stuff easier as well. DONE
 
-Also, I should refactor the removeElementFromList thing so that less of that logic is contained in the command and so that I can just specify behavior there, and not have to deal with the specifics so much. DONE
 
 Commenting now works, and you can begin and complete things. DONE
 
-Next up, implement some different sort orders, and then implement verbosity. 
+Verbosity is implemented.
+
+The editing command is in place, though it just displays for now.
+
+I reorganized the source so that I have some base directories and the modules I use are hierarchically contained in the Base module.
+
+I added a test module which doesn't do anything at the moment. 
+
+I should write down ideas for tests in the test module.
 
 ****************************************************************************************************
 
