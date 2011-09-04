@@ -91,8 +91,8 @@ doHelpForCommand cmd opts = do return opts { helpCmd = (Just cmd), nonOptsHandle
 doOverwrite :: OptionTransformer
 doOverwrite opts = return opts { overwrite = True }
 
-doRemoveList :: String -> OptionTransformer
-doRemoveList removeName opts = return opts { theList = removeName ++ ".txt" }
+doRemoveList :: ListName -> OptionTransformer
+doRemoveList removeName opts = return opts { theList = removeName }
 
 doEntries :: String -> OptionTransformer
 doEntries title opts = do utcTime <- getCurrentTime
@@ -115,23 +115,23 @@ doPosition str opts = case (parse positionArg "postions argument" str) of
                        Right pos -> return opts { position = Left pos }
                                                                   
 
-doSelectList :: String -> OptionTransformer
+doSelectList :: ListName -> OptionTransformer
 doSelectList list opts = do (appDir, allLists) <- getDirAndLists
                             validateList list allLists
-                            return opts { theList = list ++ ".txt", nonOptsHandler = doEntries }
+                            return opts { theList = list, nonOptsHandler = doEntries }
 
-doCreateList :: String -> OptionTransformer
-doCreateList list opts = return opts { theList = list ++ ".txt", nonOptsHandler = throwUserError }
+doCreateList :: ListName -> OptionTransformer
+doCreateList list opts = return opts { theList = list, nonOptsHandler = throwUserError }
 
 doImportance :: String -> OptionTransformer
 doImportance level opts = return opts { importance = level }
 
-doShowList :: String -> OptionTransformer
+doShowList :: ListName -> OptionTransformer
 doShowList list opts = do (appDir, allLists) <- getDirAndLists
                           validateList list allLists
                           return opts { theShowList = case theShowList opts of
-                                                           Left _ -> Right [list ++ ".txt"]
-                                                           Right lists -> Right ((list ++ ".txt"):lists) }
+                                                           Left _ -> Right [list]
+                                                           Right lists -> Right ((list):lists) }
 
 
 
@@ -163,7 +163,6 @@ positionsOption = Option ['p'] ["position"] (ReqArg doPositions "POSITION") "spe
 allListsOption = Option ['a'] ["all"] (NoArg doAllLists) "show all lists"
 positionOption = Option ['p'] ["position"] (ReqArg doPosition "POSITION") "specify an entry by its position in the selected list"
 
-
 {-- the main function --}
 
 main = do (appDir, _) <- getDirAndLists
@@ -173,7 +172,7 @@ main = do (appDir, _) <- getDirAndLists
           let (action,args, optsSetup, options) = if null input then (present, [], return, [])
                                                                 else case lookup (head input) commands of
                                                                      Just (act, opt, optsSetup, _) -> (act, tail input, optsSetup, opt)
-                                                                     Nothing -> (present, input, assumeLists, presentOptions)
+                                                                     Nothing -> (help, tail input, return, helpOptions)
           processedInput <- processInput args options optsSetup
           action processedInput
 
@@ -210,6 +209,7 @@ present (opts,remaining) = do when (verbose opts) $ putStrLn "Showing all entrie
 addOptions :: [OptDescr OptionTransformer]
 addOptions = [commandHelpOption addOptions
              ,selectListOption
+             ,verboseOption "show information about the entry that is being added"
              ]
 
 add :: (Options, [String]) -> IO ()
@@ -226,6 +226,7 @@ add (opts,remaining) = do when (verbose opts) $ putStrLn "Adding an entry."
 removeOptions :: [OptDescr OptionTransformer]
 removeOptions = [commandHelpOption removeOptions
                 ,selectListOption
+                ,verboseOption "show more detail about what is being removed"
                 ,positionsOption
                 ,sortOrderOption
                 ]
@@ -252,6 +253,7 @@ remove (opts,remaining) = do when (verbose opts) $ putStrLn "Removing an entry."
 
 createOptions :: [OptDescr OptionTransformer]
 createOptions = [commandHelpOption createOptions
+                ,verboseOption "more verbose output"
                 ,selectListOption
                 ,overwriteOption
                 ,sortOrderOption
@@ -270,6 +272,7 @@ create (opts,remaining) = do when (verbose opts) $ putStrLn "Creating a new list
 
 helpOptions :: [OptDescr OptionTransformer]
 helpOptions = [commandHelpOption helpOptions
+              ,verboseOption "more verbose output"
               ]
 
 help :: (Options, [String]) -> IO ()
@@ -290,26 +293,28 @@ help (opts,_) = do when (verbose opts) $ putStrLn "Displaying help for the progr
 resetOptions :: [OptDescr OptionTransformer]
 resetOptions = [commandHelpOption resetOptions
                ,overwriteOption
+               ,verboseOption "more verbose output"
                ]
 
 reset :: (Options, [String]) -> IO ()
 reset (opts,_) = do when (verbose opts) $ putStrLn "Clearing all lists."
                     let confirm = overwrite opts
-                    if confirm then do (_, allLists) <- getDirAndLists
-                                       mapM_ removeFile allLists
-                                       createList defaultListFile
-                                       return ()
+                    if confirm then removeAllLists
                                else do putStrLn "This will remove all your lists permanently. This operation cannot be undone."
-                                       noReset <- prompt
-                                       unless noReset $ do (_, allLists) <- getDirAndLists
-                                                           mapM_ removeFile allLists
-                                                           createList defaultListFile
-                                                           return ()
+                                       shouldReset <- prompt
+                                       when shouldReset removeAllLists
+
+removeAllLists :: IO ()
+removeAllLists = do (_, allLists) <- getDirAndLists
+                    mapM_ (removeFile . appendExtension) allLists
+                    createList defaultListName
+                    return ()
 
 {-- Add a comment to an entry, or change the current comment --}
 
 commentOptions :: [OptDescr OptionTransformer]
 commentOptions = [commandHelpOption commentOptions
+                 ,verboseOption "more verbose output"
                  ,overwriteOption
                  ,selectListOption
                  ,positionOption
@@ -333,6 +338,7 @@ commentEntry (opts,_) = do when (verbose opts) $ putStrLn "Adding comment to ent
  
 commentListOptions :: [OptDescr OptionTransformer]
 commentListOptions = [commandHelpOption commentOptions
+                     ,verboseOption "more verbose output"
                      ,overwriteOption
                      ]
 
@@ -346,6 +352,7 @@ comment_list (opts,_) = do when (verbose opts) $ putStrLn "Adding comment to lis
 
 completeEntryOptions :: [OptDescr OptionTransformer]
 completeEntryOptions = [commandHelpOption completeEntryOptions
+                       ,verboseOption "more verbose output"
                        ,selectListOption
                        ,positionsOption
                        ,sortOrderOption
@@ -366,6 +373,7 @@ complete_entry comp (opts,_) = do when (verbose opts) $ putStrLn "Changing the c
 
 cleanupOptions :: [OptDescr OptionTransformer]
 cleanupOptions = [commandHelpOption cleanupOptions
+                 ,verboseOption "more verbose output"
                  ,selectListOption
                  ]
 
@@ -379,6 +387,7 @@ cleanup (opts, _) = do when (verbose opts) $ putStrLn "Removing all completed en
 
 editOptions :: [OptDescr OptionTransformer]
 editOptions = [commandHelpOption editOptions
+              ,verboseOption "more verbose output"
               ,selectListOption
               ,sortOrderOption
               ]

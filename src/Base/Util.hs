@@ -28,11 +28,13 @@ appName = "rmmbr"
 decoLength = 30
 decoChar = '*'
 defaultSort = "byDateTime"
-defaultListFile = "todo.txt"
+defaultListName = "todo"
 headerLength = 2
 usageHelpHeader = "Usage: rmmbr [OPTION...] "
 defaultComment = "(default comment)"
+defaultExtension = "rmmbr"
 
+type ListName = String
 
 {-- Defining OptionTransformer and the handler for invalid arguments --}
 
@@ -53,8 +55,8 @@ data Options = Options { nonOptsHandler :: String -> OptionTransformer,
                          overwrite :: Bool,
 --                         interactive :: Bool,
                          position :: Either Position [Position],
-                         theShowList :: Either String [String],
-                         theList :: String,
+                         theShowList :: Either ListName [ListName],
+                         theList :: ListName,
                          entries :: [Entry],
                          importance :: String,
                          confirm :: String,
@@ -80,8 +82,8 @@ defaultOptions = Options { nonOptsHandler = throwUserError,
                            overwrite = False,
 --                           interactive = False,
                            position = Left Last,
-                           theShowList = Left defaultListFile,
-                           theList = defaultListFile,
+                           theShowList = Left defaultListName,
+                           theList = defaultListName,
                            entries = [],
                            importance = "",
                            sort = fromJust $ lookup defaultSort sortOrders }
@@ -110,45 +112,45 @@ configure = do putStrLn "Creating appropriate directories and deault list files.
                (appDir, _) <- getDirAndLists
                createDirectoryIfMissing True appDir
                setCurrentDirectory appDir
-               createList defaultListFile
+               createList defaultListName
 
-getDirAndLists :: IO (FilePath, [String])
+getDirAndLists :: IO (FilePath, [ListName])
 getDirAndLists = do appDir <- getAppUserDataDirectory appName
                     setCurrentDirectory appDir
                     dirContents <- getDirectoryContents appDir
                     files <- filterM doesFileExist dirContents
-                    let lists = filter (".txt" `isSuffixOf`) files
+                    let (lists, _) = unzip $ map (break (\char -> char == '.')) $ filter (defaultExtension `isSuffixOf`) files
                     return (appDir, lists)
 
 {-- Takes a list and returns a tuple of the header and entries, in lines --}
 
-getHeaderAndEntries :: FilePath -> SortFunction -> IO ([String],[Entry])
-getHeaderAndEntries file sf = do (appDir, _) <- getDirAndLists
+getHeaderAndEntries :: ListName -> SortFunction -> IO ([String],[Entry])
+getHeaderAndEntries name sf = do (appDir, _) <- getDirAndLists
                                  setCurrentDirectory appDir
-                                 handle <- openFile file ReadMode
+                                 handle <- openList name ReadMode
                                  header <- replicateM headerLength $ hGetLine handle
-                                 entriesParse <- getEntries' file handle                              
+                                 entriesParse <- getEntries' name handle                              
                                  hClose handle
                                  entries <- case partitionEithers entriesParse of
                                                 ([], vals) -> return vals
                                                 (errs, _) -> inputError $ unlines $ map show errs                                 
                                  return (header, sortBy sf entries)
 
-getEntries' :: FilePath -> Handle -> IO [Either ParseError Entry]
-getEntries' file handle = do eof <- hIsEOF handle
+getEntries' :: ListName -> Handle -> IO [Either ParseError Entry]
+getEntries' name handle = do eof <- hIsEOF handle
                              if eof then return [] else do entryLine <- hGetLine handle
-                                                           let e = parse entry file entryLine
-                                                           entries <- getEntries' file handle
+                                                           let e = parse entry name entryLine
+                                                           entries <- getEntries' name handle
                                                            return (e:entries)
 
 {-- Initializes a list with a header --}
 
-createList :: FilePath -> IO ()
-createList newList = do handle <- openFile newList WriteMode
-                        currentTime <- getCurrentTime
-                        hPutStrLn handle $ (replicate decoLength decoChar) ++ " " ++ newList ++ " " ++ (replicate decoLength decoChar)
-                        hPutStrLn handle $ formatTime defaultTimeLocale "Created on %D at: %X" currentTime
-                        hClose handle
+createList :: ListName -> IO ()
+createList name = do handle <- openList name WriteMode
+                     currentTime <- getCurrentTime
+                     hPutStrLn handle $ (replicate decoLength decoChar) ++ " " ++ name ++ " " ++ (replicate decoLength decoChar)
+                     hPutStrLn handle $ formatTime defaultTimeLocale "Created on %D at: %X" currentTime
+                     hClose handle
 
 {-- This is the full parser for a position argument, which just adds first and last to the other parsers --}
 
@@ -226,8 +228,15 @@ applyToPosition (RRange s e) f arr = if s > e then badIntervalError
 
 {-- Does nothing if list is valid. error otherwise --}
 
-validateList :: String -> [String] -> IO ()
+validateList :: ListName -> [ListName] -> IO ()
 validateList list lists = if list `elem` lists then return ()
                                                else inputError $ "The selected list does not exist: " ++ list
+
+
+appendExtension :: String -> String
+appendExtension = (++ ('.':defaultExtension))
+
+openList :: String -> (IOMode -> IO Handle)
+openList name = openFile (appendExtension name)
 
 
